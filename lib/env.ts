@@ -65,6 +65,20 @@ if (!parsed.success) {
 
 export const env = parsed.data
 
+/**
+ * A localhost Supabase URL is valid everywhere except on a deployed instance,
+ * where it is silently fatal: `z.url()` accepts it, the app boots clean, and
+ * every query then dies as `TypeError: fetch failed` after a ~7s timeout with
+ * no hint as to why. Failing loudly at boot turns a runtime mystery into a
+ * deployment error naming the exact variable.
+ */
+if (process.env.VERCEL === '1' && /localhost|127\.0\.0\.1|\[::1\]/.test(env.NEXT_PUBLIC_SUPABASE_URL)) {
+  throw new Error(
+    `NEXT_PUBLIC_SUPABASE_URL points at ${env.NEXT_PUBLIC_SUPABASE_URL} on a deployed instance. ` +
+      'Set it to the hosted Supabase project URL (https://<ref>.supabase.co) in the Vercel dashboard.'
+  )
+}
+
 /** Which phases are wired up, for /api/health and for guarding routes. */
 export const featureReady = {
   line: Boolean(env.LINE_CHANNEL_ACCESS_TOKEN && env.LINE_CHANNEL_SECRET),

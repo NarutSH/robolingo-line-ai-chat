@@ -1,5 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/server'
-import { featureReady } from '@/lib/env'
+import { env, featureReady } from '@/lib/env'
 
 /**
  * Liveness + configuration report, and the daily cron target.
@@ -31,6 +31,15 @@ export async function GET() {
     ...(databaseError ? { databaseError } : {}),
     // Which phases are wired up. Names only — never values.
     configured: featureReady,
+    // Host only, and NEXT_PUBLIC_ by design. Pointing at the wrong Supabase
+    // project is otherwise invisible from outside.
+    supabaseHost: (() => {
+      try {
+        return new URL(env.NEXT_PUBLIC_SUPABASE_URL).host
+      } catch {
+        return 'invalid'
+      }
+    })(),
     latencyMs: Date.now() - startedAt,
     checkedAt: new Date().toISOString(),
   }

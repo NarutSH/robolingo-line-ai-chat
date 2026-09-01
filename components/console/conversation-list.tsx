@@ -31,7 +31,10 @@ export function ConversationList() {
     async function load() {
       try {
         const res = await fetch('/api/conversations', { cache: 'no-store' })
-        if (!res.ok) throw new Error(`Could not load conversations (${res.status})`)
+        if (!res.ok) {
+          const detail = (await res.json().catch(() => null)) as { error?: string } | null
+          throw new Error(detail?.error ?? `Could not load conversations (${res.status})`)
+        }
         const json = (await res.json()) as { conversations: ConversationSummary[] }
         if (!cancelled) {
           setConversations(json.conversations)

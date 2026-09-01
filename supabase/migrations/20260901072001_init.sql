@@ -7,8 +7,14 @@
 -- key only to subscribe to Realtime (see 0002).
 -- ─────────────────────────────────────────────────────────────────────────────
 
-create extension if not exists pgcrypto;   -- gen_random_uuid, gen_random_bytes
-create extension if not exists pg_trgm;    -- Thai-friendly fallback for FAQ search (phase 2)
+-- No extensions required. `gen_random_uuid()` has been in the Postgres core
+-- since 13, so this schema installs cleanly on any Postgres 13+ instance.
+--
+-- Deliberately NOT using pgcrypto's `gen_random_bytes()`: Supabase Cloud installs
+-- extensions into the `extensions` schema, which is not on the migration session's
+-- search_path, so `gen_random_bytes()` resolves locally but fails on Cloud with
+-- `42883 function does not exist`. `pg_trgm` arrives with the FAQ migration that
+-- actually uses it, schema-qualified.
 
 do $$ begin create type conversation_channel as enum ('line','web');            exception when duplicate_object then null; end $$;
 do $$ begin create type conversation_mode    as enum ('ai','manual');            exception when duplicate_object then null; end $$;
@@ -51,7 +57,7 @@ create table if not exists public.conversations (
   -- The topic name IS the capability: Realtime public channels let anyone with
   -- the publishable key subscribe to any topic they can name, so the name is a
   -- secret handed out only by an authorized API response.
-  realtime_token       text not null default encode(gen_random_bytes(16), 'hex'),
+  realtime_token       text not null default replace(gen_random_uuid()::text, '-', ''),
   last_message_at      timestamptz not null default now(),
   last_message_preview text,
   unread_count         integer not null default 0,
@@ -117,7 +123,7 @@ create table if not exists public.app_config (
   value text not null
 );
 insert into public.app_config (key, value)
-values ('inbox_realtime_token', encode(gen_random_bytes(16), 'hex'))
+values ('inbox_realtime_token', replace(gen_random_uuid()::text, '-', ''))
 on conflict (key) do nothing;
 
 -- ── RLS: on everywhere, no policies anywhere ────────────────────────────────

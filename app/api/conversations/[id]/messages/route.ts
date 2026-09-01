@@ -13,8 +13,14 @@ export async function GET(_request: Request, ctx: RouteContext<'/api/conversatio
     return Response.json({ error: 'Unauthorized' }, { status: 401 })
   }
   const { id } = await ctx.params
-  const [messages] = await Promise.all([listMessages(id), markConversationRead(id)])
-  return Response.json({ messages }, { headers: { 'cache-control': 'no-store' } })
+  try {
+    const [messages] = await Promise.all([listMessages(id), markConversationRead(id)])
+    return Response.json({ messages }, { headers: { 'cache-control': 'no-store' } })
+  } catch (cause) {
+    const reason = cause instanceof Error ? cause.message : String(cause)
+    console.error('[messages] load failed', cause)
+    return Response.json({ error: `Could not load messages: ${reason}` }, { status: 502 })
+  }
 }
 
 export async function POST(request: Request, ctx: RouteContext<'/api/conversations/[id]/messages'>) {

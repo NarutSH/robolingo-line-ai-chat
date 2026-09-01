@@ -33,7 +33,10 @@ export function MessageThread({ conversationId }: { conversationId: string }) {
     async function load() {
       try {
         const res = await fetch(`/api/conversations/${conversationId}/messages`, { cache: 'no-store' })
-        if (!res.ok) throw new Error(`Could not load messages (${res.status})`)
+        if (!res.ok) {
+          const detail = (await res.json().catch(() => null)) as { error?: string } | null
+          throw new Error(detail?.error ?? `Could not load messages (${res.status})`)
+        }
         const json = (await res.json()) as { messages: ChatMessage[] }
         if (!cancelled) {
           setMessages(json.messages)
