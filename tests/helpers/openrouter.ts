@@ -58,9 +58,19 @@ export function modelCalls(): number {
   return calls('openrouter.ai').length
 }
 
-/** What the model was actually asked, for checking history and prompts. */
-export function lastModelRequest(): { messages: Array<{ role: string; content: unknown }> } {
-  const requests = calls('openrouter.ai')
-  const body = requests.at(-1)?.body as { messages?: Array<{ role: string; content: unknown }> }
-  return { messages: body?.messages ?? [] }
+interface CompletionRequest {
+  messages?: Array<{ role: string; content: unknown }>
+  tools?: Array<{ function?: { name?: string } }>
+}
+
+/** What the model was actually asked, for checking history, prompts and tools. */
+export function lastModelRequest(): {
+  messages: Array<{ role: string; content: unknown }>
+  toolNames: string[]
+} {
+  const body = calls('openrouter.ai').at(-1)?.body as CompletionRequest | undefined
+  return {
+    messages: body?.messages ?? [],
+    toolNames: (body?.tools ?? []).map((t) => t.function?.name ?? '').filter(Boolean),
+  }
 }

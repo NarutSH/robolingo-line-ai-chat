@@ -1,9 +1,11 @@
 'use client'
 
-import { useEffect, useOptimistic, useRef, useState, useTransition } from 'react'
+import { useCallback, useEffect, useOptimistic, useRef, useState, useTransition } from 'react'
 import type { ChatMessage } from '@/lib/types'
 
 const POLL_MS = 3000
+
+type Mode = 'ai' | 'manual'
 
 const senderStyle: Record<ChatMessage['sender'], { label: string; className: string }> = {
   line_user:   { label: 'LINE',     className: 'bg-muted text-foreground' },
@@ -15,8 +17,11 @@ const senderStyle: Record<ChatMessage['sender'], { label: string; className: str
 
 export function MessageThread({ conversationId }: { conversationId: string }) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [mode, setMode] = useState<Mode>('manual')
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
+  const [isDrafting, setIsDrafting] = useState(false)
+  const [isSwitching, setIsSwitching] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -27,19 +32,24 @@ export function MessageThread({ conversationId }: { conversationId: string }) {
     draft,
   ])
 
+  const load = useCallback(async () => {
+    const res = await fetch(`/api/conversations/${conversationId}/messages`, { cache: 'no-store' })
+    if (!res.ok) {
+      const detail = (await res.json().catch(() => null)) as { error?: string } | null
+      throw new Error(detail?.error ?? `Could not load messages (${res.status})`)
+    }
+    return (await res.json()) as { messages: ChatMessage[]; mode: Mode }
+  }, [conversationId])
+
   useEffect(() => {
     let cancelled = false
 
-    async function load() {
+    async function poll() {
       try {
-        const res = await fetch(`/api/conversations/${conversationId}/messages`, { cache: 'no-store' })
-        if (!res.ok) {
-          const detail = (await res.json().catch(() => null)) as { error?: string } | null
-          throw new Error(detail?.error ?? `Could not load messages (${res.status})`)
-        }
-        const json = (await res.json()) as { messages: ChatMessage[] }
+        const json = await load()
         if (!cancelled) {
           setMessages(json.messages)
+          setMode(json.mode)
           setError(null)
         }
       } catch (cause) {
@@ -47,17 +57,61 @@ export function MessageThread({ conversationId }: { conversationId: string }) {
       }
     }
 
-    load()
-    const timer = setInterval(load, POLL_MS)
+    poll()
+    const timer = setInterval(poll, POLL_MS)
     return () => {
       cancelled = true
       clearInterval(timer)
     }
-  }, [conversationId])
+  }, [load])
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
   }, [optimistic.length])
+
+  async function switchMode(next: Mode) {
+    setIsSwitching(true)
+    // Moved before the request lands so taking over feels immediate; the next
+    // poll is authoritative and will correct it if the change did not stick.
+    setMode(next)
+    try {
+      const res = await fetch(`/api/conversations/${conversationId}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mode: next }),
+      })
+      if (!res.ok) {
+        const json = (await res.json().catch(() => null)) as { error?: string } | null
+        setError(json?.error ?? `Could not change the mode (${res.status})`)
+        setMode(next === 'ai' ? 'manual' : 'ai')
+      } else {
+        setError(null)
+      }
+    } finally {
+      setIsSwitching(false)
+    }
+  }
+
+  async function suggestReply() {
+    setIsDrafting(true)
+    try {
+      const res = await fetch(`/api/conversations/${conversationId}/suggest`, { method: 'POST' })
+      const json = (await res.json().catch(() => null)) as { text?: string; error?: string } | null
+
+      if (!res.ok || !json?.text) {
+        setError(json?.error ?? `Could not draft a reply (${res.status})`)
+        return
+      }
+
+      setError(null)
+      if (inputRef.current) {
+        inputRef.current.value = json.text
+        inputRef.current.focus()
+      }
+    } finally {
+      setIsDrafting(false)
+    }
+  }
 
   function handleSubmit(formData: FormData) {
     const text = String(formData.get('text') ?? '').trim()
@@ -88,16 +142,41 @@ export function MessageThread({ conversationId }: { conversationId: string }) {
         setError(null)
       }
 
-      const refreshed = await fetch(`/api/conversations/${conversationId}/messages`, { cache: 'no-store' })
-      if (refreshed.ok) {
-        const json = (await refreshed.json()) as { messages: ChatMessage[] }
-        setMessages(json.messages)
+      try {
+        const refreshed = await load()
+        setMessages(refreshed.messages)
+        setMode(refreshed.mode)
+      } catch {
+        // The send already reported its own outcome; a failed refresh is the
+        // poll's problem and it will try again in a moment.
       }
     })
   }
 
+  const aiIsAnswering = mode === 'ai'
+
   return (
     <div className="flex h-full min-h-0 flex-col">
+      <div className="flex items-center justify-between gap-3 border-b px-4 py-2">
+        <span className="flex items-center gap-2 text-xs">
+          <span
+            aria-hidden
+            className={`size-2 rounded-full ${aiIsAnswering ? 'bg-emerald-500' : 'bg-amber-500'}`}
+          />
+          <span className="font-medium">
+            {aiIsAnswering ? 'The AI is answering' : 'You are answering'}
+          </span>
+        </span>
+        <button
+          type="button"
+          onClick={() => switchMode(aiIsAnswering ? 'manual' : 'ai')}
+          disabled={isSwitching}
+          className="rounded-md border px-2.5 py-1 text-xs font-medium hover:bg-muted disabled:opacity-50"
+        >
+          {aiIsAnswering ? 'Take over' : 'Hand back to the AI'}
+        </button>
+      </div>
+
       <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
         {optimistic.length === 0 && (
           <p className="text-sm text-muted-foreground">No messages in this conversation yet.</p>
@@ -134,6 +213,15 @@ export function MessageThread({ conversationId }: { conversationId: string }) {
       )}
 
       <form action={handleSubmit} className="flex gap-2 border-t p-3">
+        <button
+          type="button"
+          onClick={suggestReply}
+          disabled={isDrafting}
+          title="Draft a reply with the AI. Nothing is sent until you press Send."
+          className="rounded-md border px-3 py-2 text-sm font-medium whitespace-nowrap hover:bg-muted disabled:opacity-50"
+        >
+          {isDrafting ? 'Drafting…' : 'Suggest a reply'}
+        </button>
         <input
           ref={inputRef}
           name="text"

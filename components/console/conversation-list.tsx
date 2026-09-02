@@ -96,8 +96,22 @@ export function ConversationList() {
               <span className="min-w-0 flex-1">
                 <span className="flex items-baseline justify-between gap-2">
                   <span className="truncate text-sm font-medium">{name}</span>
-                  <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                    {relativeTime(conversation.lastMessageAt)}
+                  <span className="flex shrink-0 items-center gap-1.5">
+                    {/* Which conversations need a person, readable without
+                        opening any of them. */}
+                    <span
+                      title={
+                        conversation.mode === 'ai'
+                          ? 'The AI is answering this conversation'
+                          : 'Waiting for you'
+                      }
+                      className={`size-2 rounded-full ${
+                        conversation.mode === 'ai' ? 'bg-emerald-500' : 'bg-amber-500'
+                      }`}
+                    />
+                    <span className="text-xs text-muted-foreground tabular-nums">
+                      {relativeTime(conversation.lastMessageAt)}
+                    </span>
                   </span>
                 </span>
                 <span className="mt-0.5 flex items-center gap-2">

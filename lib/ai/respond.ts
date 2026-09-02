@@ -141,3 +141,38 @@ export async function respondWithAi(params: {
     return { outcome: 'failed', reason }
   }
 }
+
+/**
+ * A draft for the operator, from the same agent that would have answered.
+ *
+ * Writes nothing and sends nothing: the operator reads it, edits it or throws
+ * it away, and presses send themselves. That is the whole point — it speeds up
+ * the typing without moving the accountability.
+ *
+ * No claim is taken. Nothing is persisted, so two drafts racing cost a little
+ * money and nothing else. The handoff tool is not offered either: the operator
+ * is already the human it would hand to.
+ */
+export async function draftReply(conversationId: string): Promise<RespondResult> {
+  if (!featureReady.ai) return { outcome: 'skipped', reason: 'no OpenRouter key configured' }
+
+  const history = toModelHistory(await listMessages(conversationId, HISTORY_LIMIT))
+  if (history.length === 0) return { outcome: 'skipped', reason: 'nothing to reply to' }
+
+  try {
+    const result = await supportAgent({ conversationId }).invoke(
+      { messages: history },
+      { recursionLimit: AGENT_RECURSION_LIMIT }
+    )
+
+    const produced = result.messages.findLast((message) => message.getType() === 'ai')
+    const text = typeof produced?.text === 'string' ? produced.text.trim() : ''
+    if (!text) return { outcome: 'skipped', reason: 'the model produced no text' }
+
+    return { outcome: 'sent', text }
+  } catch (cause) {
+    const reason = cause instanceof Error ? cause.message : String(cause)
+    console.error('[ai] draft failed', cause)
+    return { outcome: 'failed', reason }
+  }
+}

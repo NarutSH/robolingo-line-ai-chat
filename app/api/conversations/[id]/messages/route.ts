@@ -12,8 +12,18 @@ export async function GET(_request: Request, ctx: RouteContext<'/api/conversatio
   }
   const { id } = await ctx.params
   try {
-    const [messages] = await Promise.all([listMessages(id), markConversationRead(id)])
-    return Response.json({ messages }, { headers: { 'cache-control': 'no-store' } })
+    // The mode rides along with the messages rather than needing its own poll:
+    // the console asks for this every few seconds anyway, and "who is answering
+    // this conversation right now" is part of its state, not a separate thing.
+    const [messages, conversation] = await Promise.all([
+      listMessages(id),
+      getConversationTarget(id),
+      markConversationRead(id),
+    ])
+    return Response.json(
+      { messages, mode: conversation?.mode ?? 'manual' },
+      { headers: { 'cache-control': 'no-store' } }
+    )
   } catch (cause) {
     const reason = cause instanceof Error ? cause.message : String(cause)
     console.error('[messages] load failed', cause)
