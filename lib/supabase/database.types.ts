@@ -7,6 +7,11 @@ export type Json =
   | Json[]
 
 export type Database = {
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "14.5"
+  }
   graphql_public: {
     Tables: {
       [_ in never]: never
@@ -113,6 +118,39 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      faq_entries: {
+        Row: {
+          answer: string
+          created_at: string
+          id: string
+          is_active: boolean
+          question: string
+          sort_order: number
+          tags: string[]
+          updated_at: string
+        }
+        Insert: {
+          answer: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          question: string
+          sort_order?: number
+          tags?: string[]
+          updated_at?: string
+        }
+        Update: {
+          answer?: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          question?: string
+          sort_order?: number
+          tags?: string[]
+          updated_at?: string
+        }
+        Relationships: []
       }
       line_users: {
         Row: {
@@ -267,8 +305,14 @@ export type Database = {
           realtime_token: string
         }[]
       }
-      show_limit: { Args: never; Returns: number }
-      show_trgm: { Args: { "": string }; Returns: string[] }
+      search_faq: {
+        Args: { p_limit?: number; p_query: string }
+        Returns: {
+          answer: string
+          question: string
+          score: number
+        }[]
+      }
     }
     Enums: {
       ai_status: "idle" | "running" | "error"
@@ -414,4 +458,3 @@ export const Constants = {
     },
   },
 } as const
-
