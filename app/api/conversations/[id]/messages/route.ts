@@ -1,9 +1,7 @@
 import { requireOperator } from '@/lib/auth/session'
 import { getConversationTarget, markConversationRead } from '@/lib/data/conversations'
-import {
-  createOutboundMessage, listMessages, markMessageFailed, markMessageSent, touchConversation,
-} from '@/lib/data/messages'
-import { sendToLine } from '@/lib/line/send'
+import { listMessages } from '@/lib/data/messages'
+import { dispatchOutbound, OutboundFailed } from '@/lib/messaging/dispatch'
 import { featureReady } from '@/lib/env'
 
 export const maxDuration = 30
@@ -38,29 +36,25 @@ export async function POST(request: Request, ctx: RouteContext<'/api/conversatio
 
   const conversation = await getConversationTarget(id)
   if (!conversation) return Response.json({ error: 'Conversation not found.' }, { status: 404 })
-  if (!conversation.lineUserId) {
+  if (conversation.channel === 'line' && !conversation.lineUserId) {
     return Response.json({ error: 'This conversation has no LINE recipient.' }, { status: 400 })
   }
 
-  // Recorded before sending, so a failed send is visible in the thread rather
-  // than disappearing into the logs.
-  const messageId = await createOutboundMessage({ conversationId: id, sender: 'operator', content: text })
-
   try {
-    // Always push: the operator is replying minutes after the inbound webhook,
-    // so any reply token is long dead. The idempotency key stops a retried
-    // request from double-sending.
-    const result = await sendToLine({
-      to: conversation.lineUserId,
-      text,
-      idempotencyKey: messageId,
-    })
-    await markMessageSent(messageId, result.lineMessageId)
-    await touchConversation(id, text)
-    return Response.json({ id: messageId, via: result.via })
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error)
-    await markMessageFailed(messageId, reason)
-    return Response.json({ error: `LINE rejected the message: ${reason}`, id: messageId }, { status: 502 })
+    // No reply token: the operator is answering minutes after the inbound
+    // webhook, so any token LINE issued is long dead. dispatchOutbound records
+    // the row before sending, so a rejection stays visible in the thread.
+    const result = await dispatchOutbound({ conversation, sender: 'operator', text })
+    return Response.json({ id: result.messageId, via: result.via })
+  } catch (cause) {
+    if (cause instanceof OutboundFailed) {
+      return Response.json(
+        { error: `Could not deliver the message: ${cause.reason}`, id: cause.messageId },
+        { status: 502 }
+      )
+    }
+    const reason = cause instanceof Error ? cause.message : String(cause)
+    console.error('[messages] send failed', cause)
+    return Response.json({ error: `Could not send the message: ${reason}` }, { status: 502 })
   }
 }
