@@ -53,12 +53,28 @@ async function describeRequest(
   return { url: new URL(href), method, headers, body, rawBody }
 }
 
+/**
+ * Only the database is allowed out. Anything else that is not faked is a bug in
+ * the test, not a thing to quietly permit: an unfaked OpenRouter call would hit
+ * the real API, spend real money and make the suite depend on a third party.
+ */
+function isPassThrough(host: string): boolean {
+  const supabase = process.env.NEXT_PUBLIC_SUPABASE_URL
+  return Boolean(supabase) && host === new URL(supabase!).host
+}
+
 async function dispatch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const href = input instanceof Request ? input.url : String(input)
   const host = new URL(href).host
 
   const match = handlers.find(([fragment]) => host.includes(fragment))
-  if (!match) return realFetch(input as RequestInfo, init)
+  if (!match) {
+    if (isPassThrough(host)) return realFetch(input as RequestInfo, init)
+    throw new Error(
+      `This test reached out to ${host}, which is not faked. Add it to fakeFetch() ` +
+        'rather than letting the suite call the real service.'
+    )
+  }
 
   const request = await describeRequest(input, init)
   intercepted.push(request)

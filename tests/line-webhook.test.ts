@@ -10,6 +10,7 @@ import {
   tamperedWebhook,
 } from './helpers/line'
 import { conversationForLineUser, messagesIn, seedLineConversation } from './helpers/db'
+import { openRouter } from './helpers/openrouter'
 import { flushAfter } from './support/request-context'
 
 describe('the LINE webhook', () => {
@@ -34,7 +35,10 @@ describe('the LINE webhook', () => {
   })
 
   it('records a first-time contact, their conversation, and their message', async () => {
-    fakeFetch({ 'api.line.me': lineOk() })
+    fakeFetch({
+      'api.line.me': lineOk(),
+      'openrouter.ai': openRouter({ say: 'เปิด 07:00–19:00 ทุกวันครับ' }),
+    })
     const userId = newTestUserId()
 
     const response = await POST(signedWebhook({ userId, text: 'เปิดกี่โมงครับ' }))
@@ -45,16 +49,20 @@ describe('the LINE webhook', () => {
     const conversation = await conversationForLineUser(userId)
     expect(conversation).not.toBeNull()
     expect(conversation!.channel).toBe('line')
+    // A contact nobody has seen before starts on the AI.
+    expect(conversation!.mode).toBe('ai')
 
     const messages = await messagesIn(conversation!.id)
-    expect(messages).toHaveLength(1)
     expect(messages[0].direction).toBe('inbound')
     expect(messages[0].sender).toBe('line_user')
     expect(messages[0].content).toBe('เปิดกี่โมงครับ')
   })
 
   it('treats a redelivered event as already handled', async () => {
-    fakeFetch({ 'api.line.me': lineOk() })
+    fakeFetch({
+      'api.line.me': lineOk(),
+      'openrouter.ai': openRouter({ say: 'รับทราบครับ' }),
+    })
     const userId = newTestUserId()
     const eventId = newTestEventId()
 
@@ -70,7 +78,9 @@ describe('the LINE webhook', () => {
 
     const conversation = await conversationForLineUser(userId)
     const messages = await messagesIn(conversation!.id)
-    expect(messages).toHaveLength(1)
+    // One inbound message and one answer: the redelivery added neither.
+    expect(messages.filter((m) => m.direction === 'inbound')).toHaveLength(1)
+    expect(sentToLine()).toHaveLength(1)
   })
 
   it('stores a message on a manual conversation without answering it', async () => {

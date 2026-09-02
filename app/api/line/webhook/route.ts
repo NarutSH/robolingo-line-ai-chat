@@ -4,6 +4,7 @@ import { verifyLineSignature } from '@/lib/line/verify'
 import { ingestLineMessage } from '@/lib/line/ingest'
 import { refreshProfile } from '@/lib/line/profile'
 import { createAdminClient } from '@/lib/supabase/server'
+import { respondWithAi } from '@/lib/ai/respond'
 
 /**
  * Bounds the after() work. This is a deliberate reduction from Vercel's 300s
@@ -97,13 +98,34 @@ export async function POST(request: Request) {
 
     if (result.isDuplicate) continue
 
-    // Everything slow happens after the 200 is already on the wire.
+    // Everything slow happens after the 200 is already on the wire. Two separate
+    // after() calls, not one: a profile lookup that fails must not cost the
+    // customer their answer.
     if (result.needsProfile) {
       after(() =>
         refreshProfile(lineUserId).catch((error) => {
           console.error('[line] profile refresh failed', error)
         })
       )
+    }
+
+    const conversationId = result.conversationId
+    if (conversationId) {
+      after(async () => {
+        // respondWithAi decides whether it is its place to answer at all — it is a
+        // no-op on a manual conversation, or with no OpenRouter key configured.
+        const outcome = await respondWithAi({
+          conversationId,
+          replyToken: messageEvent.replyToken,
+          // LINE's own receipt time, not ours. On a redelivered event that is
+          // genuinely old, which is exactly when the reply token is dead and the
+          // send should fall back to a push.
+          replyTokenIssuedAt: new Date(messageEvent.timestamp ?? Date.now()),
+        })
+        if (outcome.outcome === 'failed') {
+          console.error('[ai] could not answer', conversationId, outcome.reason)
+        }
+      })
     }
   }
 
