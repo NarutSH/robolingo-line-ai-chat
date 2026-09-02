@@ -47,7 +47,7 @@ export function ConversationList() {
         }
         if (!cancelled) {
           setConversations(json.conversations)
-          setRealtimeTopic(json.realtimeTopic ? `console:${json.realtimeTopic}` : null)
+          setRealtimeTopic(json.realtimeTopic)
           setError(null)
         }
       } catch (cause) {

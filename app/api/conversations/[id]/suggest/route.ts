@@ -20,7 +20,7 @@ export async function POST(_request: Request, ctx: RouteContext<'/api/conversati
   const { id } = await ctx.params
   const result = await draftReply(id)
 
-  if (result.outcome === 'sent' && result.text) {
+  if (result.outcome === 'drafted' && result.text) {
     return Response.json({ text: result.text })
   }
   if (result.outcome === 'skipped') {

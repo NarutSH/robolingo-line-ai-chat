@@ -72,7 +72,7 @@ export function MessageThread({
         if (!cancelled) {
           setMessages(json.messages)
           setMode(json.mode)
-          setRealtimeTopic(json.realtimeTopic ? `conversation:${json.realtimeTopic}` : null)
+          setRealtimeTopic(json.realtimeTopic)
           setError(null)
         }
       } catch (cause) {
@@ -170,7 +170,7 @@ export function MessageThread({
         const refreshed = await load()
         setMessages(refreshed.messages)
         setMode(refreshed.mode)
-        setRealtimeTopic(refreshed.realtimeTopic ? `conversation:${refreshed.realtimeTopic}` : null)
+        setRealtimeTopic(refreshed.realtimeTopic)
       } catch {
         // The send already reported its own outcome; a failed refresh is the
         // poll's problem and it will try again in a moment.

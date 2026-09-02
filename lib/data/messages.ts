@@ -97,7 +97,12 @@ export async function recordSystemNote(conversationId: string, content: string):
   if (error) throw new Error(error.message)
 }
 
-/** A message from a web visitor: inbound, like a LINE message, but with no LINE. */
+/**
+ * A message from a web visitor: inbound, like a LINE message, but with no LINE.
+ *
+ * The LINE side raises the unread count inside `ingest_line_message`; the
+ * matching call for this path is waiting on its migration (see below).
+ */
 export async function recordVisitorMessage(
   conversationId: string,
   content: string
@@ -117,5 +122,12 @@ export async function recordVisitorMessage(
     .single()
 
   if (error) throw new Error(error.message)
+
+  // TODO: call bump_unread() here once its migration is applied. Until then a
+  // web conversation reads as zero unread forever, which tells the operator
+  // nobody is waiting — see supabase/migrations/20260902075033_bump_unread_for_web.sql.
+  // The call is held back rather than cast past the type checker, so the code
+  // only ever compiles against a schema that actually exists.
+
   return data.id
 }

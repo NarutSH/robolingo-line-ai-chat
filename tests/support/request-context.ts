@@ -39,9 +39,9 @@ export function withCookie(name: string, value: string): void {
   jar.set(name, value)
 }
 
-/** Read a cookie the handler set on the way out. */
-export function readCookie(name: string): string | undefined {
-  return jar.get(name)
+/** The visitor cookie as the app last set it, for tests that tamper with it. */
+export function readVisitorCookie(): string | undefined {
+  return jar.get('web_visitor')
 }
 
 export function cookieStore() {
@@ -79,8 +79,4 @@ export async function flushAfter(): Promise<void> {
       await (typeof task === 'function' ? task() : task)
     }
   }
-}
-
-export function pendingAfterCount(): number {
-  return pending.length
 }

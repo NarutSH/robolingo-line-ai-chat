@@ -8,7 +8,12 @@ import type { ConversationSummary } from '@/lib/data/conversations'
 import { fakeFetch } from './helpers/fetch-fake'
 import { lineOk, sentToLine } from './helpers/line'
 import { openRouter } from './helpers/openrouter'
-import { flushAfter, resetRequestContext, withCookie } from './support/request-context'
+import {
+  flushAfter,
+  readVisitorCookie,
+  resetRequestContext,
+  withCookie,
+} from './support/request-context'
 
 function visitorMessage(text: string): Request {
   return new Request('https://webchat.test/api/chat/messages', {
@@ -118,5 +123,25 @@ describe('the web chat widget', () => {
     const after = await readVisitorMessages()
     expect(after.at(-1)!.sender).toBe('operator')
     expect(after.at(-1)!.content).toBe('มีครับ 4 คัน')
+  })
+})
+
+describe('a forged visitor cookie', () => {
+  it('grants nothing', async () => {
+    fakeFetch({ 'openrouter.ai': openRouter({ say: 'ครับ' }) })
+    await sendChat(visitorMessage('ของจริง'))
+    await flushAfter()
+
+    const genuine = (await readChat().then((r) => r.json())) as { messages: ChatMessage[] }
+    expect(genuine.messages.length).toBeGreaterThan(0)
+
+    // Same session id, signature tampered with. The routes take no conversation
+    // id from the client, so this is the only handle an attacker has — and it
+    // has to be worthless.
+    const [sessionId, expiresAt] = readVisitorCookie()!.split('.')
+    resetRequestContext()
+    withCookie('web_visitor', `${sessionId}.${expiresAt}.notarealsignature`)
+
+    expect(await readVisitorMessages()).toHaveLength(0)
   })
 })

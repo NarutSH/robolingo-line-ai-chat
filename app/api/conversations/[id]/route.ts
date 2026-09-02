@@ -8,13 +8,13 @@ import { getConversationTarget, setConversationMode } from '@/lib/data/conversat
  * flight reads the mode again immediately before it sends, so the reply it was
  * about to make is discarded rather than landing on top of them.
  */
-export async function PATCH(_request: Request, ctx: RouteContext<'/api/conversations/[id]'>) {
+export async function PATCH(request: Request, ctx: RouteContext<'/api/conversations/[id]'>) {
   if (!(await requireOperator())) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   const { id } = await ctx.params
-  const body = (await _request.json().catch(() => null)) as { mode?: string } | null
+  const body = (await request.json().catch(() => null)) as { mode?: string } | null
 
   if (body?.mode !== 'ai' && body?.mode !== 'manual') {
     return Response.json({ error: "Mode must be 'ai' or 'manual'." }, { status: 400 })

@@ -3,7 +3,7 @@ import { AIMessage, HumanMessage, type BaseMessage } from '@langchain/core/messa
 import { AGENT_RECURSION_LIMIT, supportAgent } from '@/lib/ai/agent'
 import {
   claimAiRun,
-  getConversationMode,
+  readRunState,
   getConversationTarget,
   releaseAiRun,
 } from '@/lib/data/conversations'
@@ -23,8 +23,12 @@ export type RespondOutcome =
   | 'busy'
   /** An operator took over while the model was thinking. */
   | 'taken-over'
+  /** A newer run holds the claim; this one has nothing left to say. */
+  | 'superseded'
   /** The agent stepped back; a member of staff has the conversation now. */
   | 'handed-off'
+  /** A draft for the operator. Nothing was written and nothing was sent. */
+  | 'drafted'
   | 'failed'
 
 export interface RespondResult {
@@ -52,6 +56,16 @@ function toModelHistory(messages: ChatMessage[]): BaseMessage[] {
     }
     return []
   })
+}
+
+/**
+ * The last *AI* message, not simply the last one. Taking the tail would hand a
+ * raw tool result to the customer if the transcript ever ended on one — a
+ * mistake they would read, so it is worth being explicit about.
+ */
+function finalReplyText(messages: BaseMessage[]): string {
+  const produced = messages.findLast((message) => message.getType() === 'ai')
+  return typeof produced?.text === 'string' ? produced.text.trim() : ''
 }
 
 /**
@@ -95,26 +109,30 @@ export async function respondWithAi(params: {
       { recursionLimit: AGENT_RECURSION_LIMIT }
     )
 
-    // The last *AI* message, not simply the last one. Taking the tail would
-    // send a raw tool result to the customer if the transcript ever ended on
-    // one — a mistake they would read, so it is worth being explicit about.
-    const produced = result.messages.findLast((message) => message.getType() === 'ai')
-    const text = typeof produced?.text === 'string' ? produced.text.trim() : ''
+    const text = finalReplyText(result.messages)
 
     if (!text) {
       await releaseAiRun(params.conversationId, runId, 'idle')
       return { outcome: 'skipped', reason: 'the model produced no text' }
     }
 
-    // Checked as late as possible. An operator who took over while the model was
-    // thinking has already decided they are handling this, and a reply landing
-    // on top of them is worse than no reply at all.
-    //
-    // A handoff also leaves the conversation manual, but that one is ours: the
-    // customer still needs to hear that someone is coming, or the handover
-    // reads to them as being ignored.
+    // Checked as late as possible, because both of these can change while the
+    // model is thinking.
     const handedOff = handoffReason !== null
-    if (!handedOff && (await getConversationMode(params.conversationId)) !== 'ai') {
+    const state = await readRunState(params.conversationId, runId)
+
+    // Someone else holds the claim now, so this run has been superseded and
+    // whatever it was about to say is a duplicate of what they will say.
+    if (!state.ownsRun) {
+      return { outcome: 'superseded' }
+    }
+
+    // An operator who took over has already decided they are handling this, and
+    // a reply landing on top of them is worse than no reply at all. A handoff
+    // also leaves the conversation manual, but that one is ours: the customer
+    // still needs to hear that someone is coming, or being handed over reads to
+    // them as being ignored.
+    if (!handedOff && state.mode !== 'ai') {
       await releaseAiRun(params.conversationId, runId, 'idle')
       return { outcome: 'taken-over' }
     }
@@ -165,11 +183,10 @@ export async function draftReply(conversationId: string): Promise<RespondResult>
       { recursionLimit: AGENT_RECURSION_LIMIT }
     )
 
-    const produced = result.messages.findLast((message) => message.getType() === 'ai')
-    const text = typeof produced?.text === 'string' ? produced.text.trim() : ''
+    const text = finalReplyText(result.messages)
     if (!text) return { outcome: 'skipped', reason: 'the model produced no text' }
 
-    return { outcome: 'sent', text }
+    return { outcome: 'drafted', text }
   } catch (cause) {
     const reason = cause instanceof Error ? cause.message : String(cause)
     console.error('[ai] draft failed', cause)

@@ -1,5 +1,5 @@
 import { createHmac, randomUUID } from 'node:crypto'
-import { calls, type Handler, type InterceptedRequest } from './fetch-fake'
+import { calls, type Handler } from './fetch-fake'
 
 /** Reserved so test contacts are recognisable and sweepable. LINE ids are 'U' + 32 hex. */
 export const TEST_USER_PREFIX = 'Utest'
@@ -131,8 +131,4 @@ export function sentToLine(): SentMessage[] {
         retryKey: c.headers.get('x-line-retry-key') ?? undefined,
       }
     })
-}
-
-export function profileLookups(): InterceptedRequest[] {
-  return calls('api.line.me').filter((c) => c.url.pathname.includes('/profile/'))
 }

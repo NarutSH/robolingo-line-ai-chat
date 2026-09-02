@@ -6,6 +6,7 @@ import {
   touchConversation,
 } from '@/lib/data/messages'
 import { sendToLine } from '@/lib/line/send'
+import type { ConversationTarget } from '@/lib/data/conversations'
 
 /**
  * Every outbound message takes this path, whoever wrote it.
@@ -20,12 +21,6 @@ import { sendToLine } from '@/lib/line/send'
  */
 
 export type OutboundSender = 'operator' | 'ai' | 'system'
-
-export interface DispatchTarget {
-  id: string
-  channel: 'line' | 'web'
-  lineUserId: string | null
-}
 
 export interface DispatchResult {
   messageId: string
@@ -45,7 +40,7 @@ export class OutboundFailed extends Error {
 }
 
 export async function dispatchOutbound(params: {
-  conversation: DispatchTarget
+  conversation: ConversationTarget
   sender: OutboundSender
   text: string
   /** Present only for a reply generated in the seconds after an inbound webhook. */

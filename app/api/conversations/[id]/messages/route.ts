@@ -24,7 +24,10 @@ export async function GET(_request: Request, ctx: RouteContext<'/api/conversatio
       {
         messages,
         mode: conversation?.mode ?? 'manual',
-        realtimeTopic: conversation?.realtimeToken ?? null,
+        // Fully qualified here rather than in the browser: the prefix has to
+        // match what the database broadcasts on, and three client sites each
+        // remembering to add it is three places for them to disagree.
+        realtimeTopic: conversation ? `conversation:${conversation.realtimeToken}` : null,
       },
       { headers: { 'cache-control': 'no-store' } }
     )

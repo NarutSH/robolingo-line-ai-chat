@@ -14,7 +14,7 @@ export async function GET() {
       consoleRealtimeTopic(),
     ])
     return Response.json(
-      { conversations, realtimeTopic },
+      { conversations, realtimeTopic: realtimeTopic ? `console:${realtimeTopic}` : null },
       { headers: { 'cache-control': 'no-store' } }
     )
   } catch (cause) {

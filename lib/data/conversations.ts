@@ -14,6 +14,28 @@ export interface ConversationSummary {
   lastMessagePreview: string | null
 }
 
+/**
+ * Supabase types an embedded one-to-one join as either the row or an array of
+ * them depending on how it infers the relationship, so both readers have to
+ * cope with both shapes. Doing it in one place keeps the two in step.
+ */
+type EmbeddedContact = {
+  line_user_id?: string | null
+  display_name?: string | null
+  picture_url?: string | null
+  is_friend?: boolean | null
+}
+
+function contactFields(embedded: EmbeddedContact | EmbeddedContact[] | null) {
+  const contact = Array.isArray(embedded) ? embedded[0] : embedded
+  return {
+    displayName: contact?.display_name ?? null,
+    pictureUrl: contact?.picture_url ?? null,
+    lineUserId: contact?.line_user_id ?? null,
+    isFriend: contact?.is_friend ?? false,
+  }
+}
+
 /** The inbox list: who has written in, most recent first. */
 export async function listConversations(): Promise<ConversationSummary[]> {
   const supabase = createAdminClient()
@@ -27,21 +49,15 @@ export async function listConversations(): Promise<ConversationSummary[]> {
 
   if (error) throw new Error(error.message)
 
-  return (data ?? []).map((row) => {
-    const contact = Array.isArray(row.line_users) ? row.line_users[0] : row.line_users
-    return {
-      id: row.id,
-      channel: row.channel,
-      mode: row.mode,
-      displayName: contact?.display_name ?? null,
-      pictureUrl: contact?.picture_url ?? null,
-      lineUserId: contact?.line_user_id ?? null,
-      isFriend: contact?.is_friend ?? false,
-      unreadCount: row.unread_count,
-      lastMessageAt: row.last_message_at,
-      lastMessagePreview: row.last_message_preview,
-    }
-  })
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    channel: row.channel,
+    mode: row.mode,
+    ...contactFields(row.line_users),
+    unreadCount: row.unread_count,
+    lastMessageAt: row.last_message_at,
+    lastMessagePreview: row.last_message_preview,
+  }))
 }
 
 export async function getConversationTarget(conversationId: string) {
@@ -55,16 +71,12 @@ export async function getConversationTarget(conversationId: string) {
   if (error) throw new Error(error.message)
   if (!data) return null
 
-  const contact = Array.isArray(data.line_users) ? data.line_users[0] : data.line_users
   return {
     id: data.id,
     channel: data.channel,
     mode: data.mode,
     realtimeToken: data.realtime_token,
-    lineUserId: contact?.line_user_id ?? null,
-    displayName: contact?.display_name ?? null,
-    pictureUrl: contact?.picture_url ?? null,
-    isFriend: contact?.is_friend ?? false,
+    ...contactFields(data.line_users),
   }
 }
 
@@ -126,19 +138,33 @@ export async function releaseAiRun(
     .eq('ai_run_id', runId)
 }
 
-/** Read immediately before sending, so an operator taking over is honoured. */
-export async function getConversationMode(
-  conversationId: string
-): Promise<'ai' | 'manual' | null> {
+export interface RunState {
+  mode: 'ai' | 'manual' | null
+  /** False once a newer run has taken the claim this one was holding. */
+  ownsRun: boolean
+}
+
+/**
+ * Read immediately before sending. Two questions, one round trip: is the AI
+ * still the one answering, and is *this* run still the one doing it.
+ *
+ * Ownership is the load-bearing half. Handing a conversation back to the AI
+ * resets its status, so a run that was in flight while an operator took over
+ * and changed their mind would find the mode back at `ai` and answer — while a
+ * newer run, started by the next message, answers the same question again.
+ * Checking the claim closes that: a run that no longer holds its own claim has
+ * been superseded and has nothing left to say.
+ */
+export async function readRunState(conversationId: string, runId: string): Promise<RunState> {
   const supabase = createAdminClient()
   const { data, error } = await supabase
     .from('conversations')
-    .select('mode')
+    .select('mode, ai_run_id')
     .eq('id', conversationId)
     .maybeSingle()
 
   if (error) throw new Error(error.message)
-  return data?.mode ?? null
+  return { mode: data?.mode ?? null, ownsRun: data?.ai_run_id === runId }
 }
 
 /**
@@ -185,7 +211,7 @@ export async function setConversationMode(
  * double-click: the second insert loses the race, and the select that follows
  * finds what the first one wrote.
  */
-export async function getOrCreateWebConversation(webSessionId: string): Promise<DispatchableConversation> {
+export async function getOrCreateWebConversation(webSessionId: string): Promise<ConversationTarget> {
   const supabase = createAdminClient()
 
   const existing = await supabase
@@ -216,7 +242,8 @@ export async function getOrCreateWebConversation(webSessionId: string): Promise<
   throw new Error(`getOrCreateWebConversation failed: ${created.error.message}`)
 }
 
-export interface DispatchableConversation {
+/** The minimum an outbound message needs to know about where it is going. */
+export interface ConversationTarget {
   id: string
   channel: 'line' | 'web'
   mode: 'ai' | 'manual'

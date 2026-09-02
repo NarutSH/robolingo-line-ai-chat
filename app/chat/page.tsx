@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import { VisitorChat } from '@/components/chat/visitor-chat'
-import { SHOP_NAME } from '@/lib/ai/agent'
+import { SHOP_NAME } from '@/lib/shop'
 
 export const metadata: Metadata = {
   title: `Chat with ${SHOP_NAME}`,
