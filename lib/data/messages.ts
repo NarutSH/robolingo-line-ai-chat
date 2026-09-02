@@ -100,8 +100,9 @@ export async function recordSystemNote(conversationId: string, content: string):
 /**
  * A message from a web visitor: inbound, like a LINE message, but with no LINE.
  *
- * The LINE side raises the unread count inside `ingest_line_message`; the
- * matching call for this path is waiting on its migration (see below).
+ * The unread count is raised here because `ingest_line_message` does it for the
+ * LINE side, and a web conversation that always read as zero would quietly tell
+ * the operator that nobody was waiting.
  */
 export async function recordVisitorMessage(
   conversationId: string,
@@ -123,11 +124,14 @@ export async function recordVisitorMessage(
 
   if (error) throw new Error(error.message)
 
-  // TODO: call bump_unread() here once its migration is applied. Until then a
-  // web conversation reads as zero unread forever, which tells the operator
-  // nobody is waiting — see supabase/migrations/20260902075033_bump_unread_for_web.sql.
-  // The call is held back rather than cast past the type checker, so the code
-  // only ever compiles against a schema that actually exists.
+  // Deliberately not fatal: the message is already recorded, and losing it
+  // because a counter did not move would be the worse trade. But it is logged
+  // rather than swallowed — a stuck count reads to the operator as "nobody is
+  // waiting", which is the opposite of the truth.
+  const bumped = await supabase.rpc('bump_unread', { p_conversation_id: conversationId })
+  if (bumped.error) {
+    console.error('[messages] unread count not bumped', bumped.error.message)
+  }
 
   return data.id
 }

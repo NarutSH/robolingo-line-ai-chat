@@ -8,6 +8,7 @@ import type { ConversationSummary } from '@/lib/data/conversations'
 import { fakeFetch } from './helpers/fetch-fake'
 import { lineOk, sentToLine } from './helpers/line'
 import { openRouter } from './helpers/openrouter'
+import { getConversation } from './helpers/db'
 import {
   flushAfter,
   readVisitorCookie,
@@ -143,5 +144,34 @@ describe('a forged visitor cookie', () => {
     withCookie('web_visitor', `${sessionId}.${expiresAt}.notarealsignature`)
 
     expect(await readVisitorMessages()).toHaveLength(0)
+  })
+})
+
+describe('the inbox count for a web conversation', () => {
+  it('rises with each message the visitor sends', async () => {
+    fakeFetch({ 'openrouter.ai': openRouter({ say: 'ครับ' }, { say: 'ครับ' }) })
+
+    await sendChat(visitorMessage('คำถามแรก'))
+    await flushAfter()
+    const conversationId = (await readVisitorMessages())[0].conversationId
+    expect((await getConversation(conversationId))!.unread_count).toBe(1)
+
+    await sendChat(visitorMessage('คำถามที่สอง'))
+    await flushAfter()
+
+    // Two questions waiting. Before this counted, every web conversation read
+    // as zero and the operator was told nobody needed them.
+    expect((await getConversation(conversationId))!.unread_count).toBe(2)
+  })
+
+  it('is not raised by the answers going back out', async () => {
+    fakeFetch({ 'openrouter.ai': openRouter({ say: 'ตอบแล้วครับ' }) })
+
+    await sendChat(visitorMessage('ถามหน่อย'))
+    await flushAfter()
+
+    const conversationId = (await readVisitorMessages())[0].conversationId
+    // One inbound message, one AI answer, and only the inbound one counts.
+    expect((await getConversation(conversationId))!.unread_count).toBe(1)
   })
 })

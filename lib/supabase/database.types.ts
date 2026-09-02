@@ -282,6 +282,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      bump_unread: { Args: { p_conversation_id: string }; Returns: undefined }
       gen_short_code: { Args: never; Returns: string }
       ingest_line_message: {
         Args: {
