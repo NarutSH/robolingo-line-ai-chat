@@ -13,6 +13,16 @@ export async function sweepTestData(): Promise<void> {
   await supabase.from('line_webhook_events').delete().like('webhook_event_id', `${TEST_EVENT_PREFIX}%`)
 }
 
+/**
+ * Anonymous web conversations, removed by the session ids the routes minted.
+ * Cascade takes their messages with them.
+ */
+export async function sweepVisitorConversations(sessionIds: string[]): Promise<void> {
+  if (sessionIds.length === 0) return
+  const supabase = createAdminClient()
+  await supabase.from('conversations').delete().in('web_session_id', sessionIds)
+}
+
 export interface SeededConversation {
   lineUserId: string
   contactId: string

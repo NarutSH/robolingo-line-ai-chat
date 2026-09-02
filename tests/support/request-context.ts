@@ -10,9 +10,28 @@ type AfterTask = (() => unknown) | Promise<unknown>
 let jar = new Map<string, string>()
 let pending: AfterTask[] = []
 
+/**
+ * Every anonymous visitor session the app has minted during this test file.
+ *
+ * A web conversation carries no reserved prefix the way a test LINE contact
+ * does — the session id is a plain uuid the route generates — so the only way
+ * to find them again for cleanup is to notice them being handed out. Kept
+ * across resetRequestContext(), since a test that simulates a second browser
+ * clears the jar and would otherwise lose the first session.
+ */
+let visitorSessions: string[] = []
+
 export function resetRequestContext(): void {
   jar = new Map()
   pending = []
+}
+
+export function issuedVisitorSessions(): string[] {
+  return [...visitorSessions]
+}
+
+export function forgetVisitorSessions(): void {
+  visitorSessions = []
 }
 
 /** Put a cookie on the inbound request, as a browser would. */
@@ -32,6 +51,10 @@ export function cookieStore() {
     has: (name: string) => jar.has(name),
     set: (name: string, value: string) => {
       jar.set(name, value)
+      if (name === 'web_visitor' && value) {
+        const sessionId = value.split('.')[0]
+        if (sessionId) visitorSessions.push(sessionId)
+      }
     },
     delete: (name: string) => {
       jar.delete(name)

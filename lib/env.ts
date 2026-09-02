@@ -7,9 +7,9 @@ import { z } from 'zod'
  * `NEXT_PUBLIC_*` values must be referenced as full literals — Next.js inlines
  * them at build time and a dynamic `process.env[name]` lookup is not replaced.
  *
- * Phase 2/3 variables are optional here so Phase 0/1 can build and deploy
- * before an OpenRouter key or operator LINE id exists. `/api/health` reports
- * which of them are still missing.
+ * The AI variables are optional so the app can build and deploy before an
+ * OpenRouter key exists; without one it simply does not answer, and
+ * `/api/health` says so.
  */
 
 /**
@@ -31,7 +31,6 @@ const schema = z.object({
   // LINE — required from phase 1
   LINE_CHANNEL_ACCESS_TOKEN: optionalSecret(),
   LINE_CHANNEL_SECRET: optionalSecret(),
-  LINE_OPERATOR_USER_ID: optionalSecret(),
 
   // AI — phase 2
   OPENROUTER_API_KEY: optionalSecret(),
@@ -51,7 +50,6 @@ const parsed = schema.safeParse({
   SUPABASE_SECRET_KEY: process.env.SUPABASE_SECRET_KEY,
   LINE_CHANNEL_ACCESS_TOKEN: process.env.LINE_CHANNEL_ACCESS_TOKEN,
   LINE_CHANNEL_SECRET: process.env.LINE_CHANNEL_SECRET,
-  LINE_OPERATOR_USER_ID: process.env.LINE_OPERATOR_USER_ID,
   OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
   OPENROUTER_MODEL: process.env.OPENROUTER_MODEL,
   OPERATOR_PASSWORD: process.env.OPERATOR_PASSWORD,
@@ -84,5 +82,4 @@ export const featureReady = {
   line: Boolean(env.LINE_CHANNEL_ACCESS_TOKEN && env.LINE_CHANNEL_SECRET),
   operatorAuth: Boolean(env.OPERATOR_PASSWORD && env.SESSION_SECRET),
   ai: Boolean(env.OPENROUTER_API_KEY),
-  relay: Boolean(env.LINE_OPERATOR_USER_ID),
 }

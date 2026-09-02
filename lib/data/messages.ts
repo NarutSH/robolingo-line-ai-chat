@@ -96,3 +96,26 @@ export async function recordSystemNote(conversationId: string, content: string):
   })
   if (error) throw new Error(error.message)
 }
+
+/** A message from a web visitor: inbound, like a LINE message, but with no LINE. */
+export async function recordVisitorMessage(
+  conversationId: string,
+  content: string
+): Promise<string> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('messages')
+    .insert({
+      conversation_id: conversationId,
+      direction: 'inbound',
+      sender: 'web_visitor',
+      content_type: 'text',
+      content,
+      delivery_status: 'sent',
+    })
+    .select('id')
+    .single()
+
+  if (error) throw new Error(error.message)
+  return data.id
+}

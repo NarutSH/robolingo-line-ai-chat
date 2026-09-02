@@ -15,7 +15,13 @@ const senderStyle: Record<ChatMessage['sender'], { label: string; className: str
   system:      { label: 'System',   className: 'bg-amber-500/15 text-amber-900 dark:text-amber-200' },
 }
 
-export function MessageThread({ conversationId }: { conversationId: string }) {
+export function MessageThread({
+  conversationId,
+  channel,
+}: {
+  conversationId: string
+  channel: 'line' | 'web'
+}) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [mode, setMode] = useState<Mode>('manual')
   const [error, setError] = useState<string | null>(null)
@@ -226,7 +232,7 @@ export function MessageThread({ conversationId }: { conversationId: string }) {
           ref={inputRef}
           name="text"
           autoComplete="off"
-          placeholder="Reply to this person on LINE…"
+          placeholder={channel === 'web' ? 'Reply in their browser…' : 'Reply to this person on LINE…'}
           className="flex-1 rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
         <button

@@ -22,18 +22,20 @@ export default async function ConversationPage({
         )}
         <div className="min-w-0">
           <p className="truncate text-sm font-medium">
-            {conversation.displayName ?? 'Unknown LINE user'}
+            {conversation.displayName ?? (conversation.channel === 'web' ? 'Web visitor' : 'Unknown LINE user')}
           </p>
           <p className="text-xs text-muted-foreground">
-            {conversation.isFriend
-              ? 'Replies are delivered through the Official Account'
-              : 'Not a friend of the OA — replies will be rejected by LINE'}
+            {conversation.channel === 'web'
+              ? 'Replies appear in their browser'
+              : conversation.isFriend
+                ? 'Replies are delivered through the Official Account'
+                : 'Not a friend of the OA — replies will be rejected by LINE'}
           </p>
         </div>
       </div>
 
       <div className="min-h-0 flex-1">
-        <MessageThread conversationId={conversation.id} />
+        <MessageThread conversationId={conversation.id} channel={conversation.channel} />
       </div>
     </div>
   )

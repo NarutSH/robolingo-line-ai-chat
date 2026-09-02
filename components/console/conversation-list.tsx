@@ -74,7 +74,10 @@ export function ConversationList() {
     <ul className="divide-y">
       {conversations.map((conversation) => {
         const isActive = conversation.id === activeId
-        const name = conversation.displayName ?? 'Unknown LINE user'
+        const isWeb = conversation.channel === 'web'
+        // A web visitor has no name to show, and calling them an unknown LINE
+        // user would be actively wrong.
+        const name = conversation.displayName ?? (isWeb ? 'Web visitor' : 'Unknown LINE user')
         return (
           <li key={conversation.id}>
             <Link
@@ -115,6 +118,9 @@ export function ConversationList() {
                   </span>
                 </span>
                 <span className="mt-0.5 flex items-center gap-2">
+                  <span className="shrink-0 rounded border px-1 py-px text-[10px] font-medium text-muted-foreground uppercase">
+                    {isWeb ? 'Web' : 'LINE'}
+                  </span>
                   <span className="truncate text-xs text-muted-foreground">
                     {conversation.lastMessagePreview ?? 'No messages yet'}
                   </span>

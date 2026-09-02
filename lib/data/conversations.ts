@@ -177,3 +177,48 @@ export async function setConversationMode(
     .eq('id', conversationId)
   if (error) throw new Error(`setConversationMode failed: ${error.message}`)
 }
+
+/**
+ * The conversation belonging to a browser, created on their first message.
+ *
+ * The unique index on `web_session_id` is what makes this safe under a
+ * double-click: the second insert loses the race, and the select that follows
+ * finds what the first one wrote.
+ */
+export async function getOrCreateWebConversation(webSessionId: string): Promise<DispatchableConversation> {
+  const supabase = createAdminClient()
+
+  const existing = await supabase
+    .from('conversations')
+    .select('id, channel, mode')
+    .eq('web_session_id', webSessionId)
+    .maybeSingle()
+
+  if (existing.error) throw new Error(existing.error.message)
+  if (existing.data) return { ...existing.data, lineUserId: null }
+
+  const created = await supabase
+    .from('conversations')
+    .insert({ channel: 'web', web_session_id: webSessionId })
+    .select('id, channel, mode')
+    .single()
+
+  if (!created.error) return { ...created.data, lineUserId: null }
+
+  // Lost the race against another tab; whoever won has already created it.
+  const raced = await supabase
+    .from('conversations')
+    .select('id, channel, mode')
+    .eq('web_session_id', webSessionId)
+    .maybeSingle()
+
+  if (raced.data) return { ...raced.data, lineUserId: null }
+  throw new Error(`getOrCreateWebConversation failed: ${created.error.message}`)
+}
+
+export interface DispatchableConversation {
+  id: string
+  channel: 'line' | 'web'
+  mode: 'ai' | 'manual'
+  lineUserId: string | null
+}
