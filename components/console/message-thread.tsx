@@ -2,8 +2,16 @@
 
 import { useCallback, useEffect, useOptimistic, useRef, useState, useTransition } from 'react'
 import type { ChatMessage } from '@/lib/types'
+import { useLiveUpdates } from '@/hooks/use-live-updates'
 
+/**
+ * How often to ask when nobody is telling us. Once the live channel is
+ * connected the poll drops to a slow heartbeat: it stays running on purpose, so
+ * a dropped socket costs a few seconds rather than the conversation going
+ * silent, but it stops being the thing that carries updates.
+ */
 const POLL_MS = 3000
+const HEARTBEAT_MS = 30000
 
 type Mode = 'ai' | 'manual'
 
@@ -24,6 +32,7 @@ export function MessageThread({
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [mode, setMode] = useState<Mode>('manual')
+  const [realtimeTopic, setRealtimeTopic] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
   const [isDrafting, setIsDrafting] = useState(false)
@@ -38,13 +47,20 @@ export function MessageThread({
     draft,
   ])
 
+  const pollRef = useRef<(() => void) | null>(null)
+  const isLive = useLiveUpdates(realtimeTopic, () => pollRef.current?.())
+
   const load = useCallback(async () => {
     const res = await fetch(`/api/conversations/${conversationId}/messages`, { cache: 'no-store' })
     if (!res.ok) {
       const detail = (await res.json().catch(() => null)) as { error?: string } | null
       throw new Error(detail?.error ?? `Could not load messages (${res.status})`)
     }
-    return (await res.json()) as { messages: ChatMessage[]; mode: Mode }
+    return (await res.json()) as {
+      messages: ChatMessage[]
+      mode: Mode
+      realtimeTopic: string | null
+    }
   }, [conversationId])
 
   useEffect(() => {
@@ -56,6 +72,7 @@ export function MessageThread({
         if (!cancelled) {
           setMessages(json.messages)
           setMode(json.mode)
+          setRealtimeTopic(json.realtimeTopic ? `conversation:${json.realtimeTopic}` : null)
           setError(null)
         }
       } catch (cause) {
@@ -64,12 +81,13 @@ export function MessageThread({
     }
 
     poll()
-    const timer = setInterval(poll, POLL_MS)
+    pollRef.current = poll
+    const timer = setInterval(poll, isLive ? HEARTBEAT_MS : POLL_MS)
     return () => {
       cancelled = true
       clearInterval(timer)
     }
-  }, [load])
+  }, [load, isLive])
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
@@ -152,6 +170,7 @@ export function MessageThread({
         const refreshed = await load()
         setMessages(refreshed.messages)
         setMode(refreshed.mode)
+        setRealtimeTopic(refreshed.realtimeTopic ? `conversation:${refreshed.realtimeTopic}` : null)
       } catch {
         // The send already reported its own outcome; a failed refresh is the
         // poll's problem and it will try again in a moment.

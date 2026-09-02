@@ -1,11 +1,14 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import type { ConversationSummary } from '@/lib/data/conversations'
+import { useLiveUpdates } from '@/hooks/use-live-updates'
 
 const POLL_MS = 3000
+/** Kept as a safety net once the live channel is carrying updates. */
+const HEARTBEAT_MS = 30000
 
 function initials(name: string | null) {
   return (name ?? '?').trim().charAt(0).toUpperCase() || '?'
@@ -24,6 +27,9 @@ export function ConversationList() {
   const activeId = params?.conversationId
   const [conversations, setConversations] = useState<ConversationSummary[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [realtimeTopic, setRealtimeTopic] = useState<string | null>(null)
+  const pollRef = useRef<(() => void) | null>(null)
+  const isLive = useLiveUpdates(realtimeTopic, () => pollRef.current?.())
 
   useEffect(() => {
     let cancelled = false
@@ -35,9 +41,13 @@ export function ConversationList() {
           const detail = (await res.json().catch(() => null)) as { error?: string } | null
           throw new Error(detail?.error ?? `Could not load conversations (${res.status})`)
         }
-        const json = (await res.json()) as { conversations: ConversationSummary[] }
+        const json = (await res.json()) as {
+          conversations: ConversationSummary[]
+          realtimeTopic: string | null
+        }
         if (!cancelled) {
           setConversations(json.conversations)
+          setRealtimeTopic(json.realtimeTopic ? `console:${json.realtimeTopic}` : null)
           setError(null)
         }
       } catch (cause) {
@@ -46,12 +56,13 @@ export function ConversationList() {
     }
 
     load()
-    const timer = setInterval(load, POLL_MS)
+    pollRef.current = load
+    const timer = setInterval(load, isLive ? HEARTBEAT_MS : POLL_MS)
     return () => {
       cancelled = true
       clearInterval(timer)
     }
-  }, [])
+  }, [isLive])
 
   if (error) {
     return <p className="p-4 text-sm text-red-600 dark:text-red-400">{error}</p>

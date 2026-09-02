@@ -21,7 +21,11 @@ export async function GET(_request: Request, ctx: RouteContext<'/api/conversatio
       markConversationRead(id),
     ])
     return Response.json(
-      { messages, mode: conversation?.mode ?? 'manual' },
+      {
+        messages,
+        mode: conversation?.mode ?? 'manual',
+        realtimeTopic: conversation?.realtimeToken ?? null,
+      },
       { headers: { 'cache-control': 'no-store' } }
     )
   } catch (cause) {

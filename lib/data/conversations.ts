@@ -222,3 +222,19 @@ export interface DispatchableConversation {
   mode: 'ai' | 'manual'
   lineUserId: string | null
 }
+
+/**
+ * The shared topic the inbox listens on. Stored in the database rather than the
+ * environment so it travels with the schema and cannot drift between deploys.
+ */
+export async function consoleRealtimeTopic(): Promise<string | null> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('app_config')
+    .select('value')
+    .eq('key', 'console_realtime_topic')
+    .maybeSingle()
+
+  if (error) throw new Error(error.message)
+  return data?.value ?? null
+}

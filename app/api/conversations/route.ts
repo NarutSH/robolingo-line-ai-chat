@@ -1,5 +1,5 @@
 import { requireOperator } from '@/lib/auth/session'
-import { listConversations } from '@/lib/data/conversations'
+import { consoleRealtimeTopic, listConversations } from '@/lib/data/conversations'
 
 export async function GET() {
   if (!(await requireOperator())) {
@@ -7,8 +7,16 @@ export async function GET() {
   }
 
   try {
-    const conversations = await listConversations()
-    return Response.json({ conversations }, { headers: { 'cache-control': 'no-store' } })
+    // The topic is a capability: handed out only behind the operator check,
+    // and unguessable, which is what stands in for a private channel here.
+    const [conversations, realtimeTopic] = await Promise.all([
+      listConversations(),
+      consoleRealtimeTopic(),
+    ])
+    return Response.json(
+      { conversations, realtimeTopic },
+      { headers: { 'cache-control': 'no-store' } }
+    )
   } catch (cause) {
     // Without this the request fails as a bodyless 500 and the UI can only say
     // "500" — which tells nobody whether the database is unreachable, the
