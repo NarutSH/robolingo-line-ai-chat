@@ -140,3 +140,40 @@ export async function getConversationMode(
   if (error) throw new Error(error.message)
   return data?.mode ?? null
 }
+
+/**
+ * The agent stepping back. Flips the conversation to a human and records why,
+ * so the shop can see what the FAQ is failing to cover.
+ *
+ * The mode change is what makes it stick: the AI will not claim this
+ * conversation again until an operator hands it back.
+ */
+export async function handOffToHuman(conversationId: string, reason: string): Promise<void> {
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('conversations')
+    .update({
+      mode: 'manual',
+      handoff_reason: reason.slice(0, 300),
+      handoff_at: new Date().toISOString(),
+    })
+    .eq('id', conversationId)
+  if (error) throw new Error(`handOffToHuman failed: ${error.message}`)
+}
+
+/** Handing back: the AI resumes, and the old reason no longer applies. */
+export async function setConversationMode(
+  conversationId: string,
+  mode: 'ai' | 'manual'
+): Promise<void> {
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('conversations')
+    .update(
+      mode === 'ai'
+        ? { mode, handoff_reason: null, handoff_at: null, ai_status: 'idle' as const }
+        : { mode }
+    )
+    .eq('id', conversationId)
+  if (error) throw new Error(`setConversationMode failed: ${error.message}`)
+}

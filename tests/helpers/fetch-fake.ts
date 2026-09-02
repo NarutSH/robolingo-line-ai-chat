@@ -94,6 +94,15 @@ export function fakeFetch(routes: Record<string, Handler>): void {
   handlers = Object.entries(routes)
 }
 
+/**
+ * Forget what has been recorded so far, keeping the current routes. For a test
+ * with two phases — before and after a handoff, say — so the second phase can
+ * assert on its own calls without the first phase's counting toward them.
+ */
+export function clearCalls(): void {
+  intercepted = []
+}
+
 export function resetFetchFake(): void {
   handlers = []
   intercepted = []

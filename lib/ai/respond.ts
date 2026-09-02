@@ -23,6 +23,8 @@ export type RespondOutcome =
   | 'busy'
   /** An operator took over while the model was thinking. */
   | 'taken-over'
+  /** The agent stepped back; a member of staff has the conversation now. */
+  | 'handed-off'
   | 'failed'
 
 export interface RespondResult {
@@ -80,7 +82,15 @@ export async function respondWithAi(params: {
       return { outcome: 'skipped', reason: 'nothing to reply to' }
     }
 
-    const result = await supportAgent().invoke(
+    let handoffReason: string | null = null
+    const agent = supportAgent({
+      conversationId: params.conversationId,
+      onHandoff: (reason) => {
+        handoffReason = reason
+      },
+    })
+
+    const result = await agent.invoke(
       { messages: history },
       { recursionLimit: AGENT_RECURSION_LIMIT }
     )
@@ -99,7 +109,12 @@ export async function respondWithAi(params: {
     // Checked as late as possible. An operator who took over while the model was
     // thinking has already decided they are handling this, and a reply landing
     // on top of them is worse than no reply at all.
-    if ((await getConversationMode(params.conversationId)) !== 'ai') {
+    //
+    // A handoff also leaves the conversation manual, but that one is ours: the
+    // customer still needs to hear that someone is coming, or the handover
+    // reads to them as being ignored.
+    const handedOff = handoffReason !== null
+    if (!handedOff && (await getConversationMode(params.conversationId)) !== 'ai') {
       await releaseAiRun(params.conversationId, runId, 'idle')
       return { outcome: 'taken-over' }
     }
@@ -116,7 +131,7 @@ export async function respondWithAi(params: {
     })
 
     await releaseAiRun(params.conversationId, runId, 'idle')
-    return { outcome: 'sent', text }
+    return { outcome: handedOff ? 'handed-off' : 'sent', text }
   } catch (cause) {
     const reason = cause instanceof Error ? cause.message : String(cause)
     console.error('[ai] run failed', cause)

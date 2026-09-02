@@ -76,3 +76,23 @@ export async function touchConversation(conversationId: string, preview: string)
     })
     .eq('id', conversationId)
 }
+
+/**
+ * A note from the system rather than from anyone in the conversation — why the
+ * AI stepped back, say. It is written into the thread so the operator picking
+ * it up sees the reason in place, rather than having to look somewhere else.
+ *
+ * Marked sent because nothing is delivered: the note exists for the console.
+ */
+export async function recordSystemNote(conversationId: string, content: string): Promise<void> {
+  const supabase = createAdminClient()
+  const { error } = await supabase.from('messages').insert({
+    conversation_id: conversationId,
+    direction: 'outbound',
+    sender: 'system',
+    content_type: 'text',
+    content,
+    delivery_status: 'sent',
+  })
+  if (error) throw new Error(error.message)
+}

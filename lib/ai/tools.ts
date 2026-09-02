@@ -2,6 +2,8 @@ import 'server-only'
 import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
 import { searchFaq } from '@/lib/data/faq'
+import { handOffToHuman } from '@/lib/data/conversations'
+import { recordSystemNote } from '@/lib/data/messages'
 
 /**
  * What the agent is allowed to reach for.
@@ -28,6 +30,52 @@ export function searchFaqTool() {
         'published no answer, which means you do not know.',
       schema: z.object({
         question: z.string().describe("The customer's question, in their own words"),
+      }),
+    }
+  )
+}
+
+/**
+ * The agent stepping back rather than guessing.
+ *
+ * The writes happen here, in the tool, rather than being inferred afterwards
+ * from the agent's output: by the time the run ends, the decision has already
+ * been made and there is nothing to interpret.
+ *
+ * `onHandoff` tells the caller this run handed over, which is what lets the
+ * acknowledgement through while an ordinary reply would be suppressed.
+ */
+export function handoffTool(options: { conversationId: string; onHandoff: (reason: string) => void }) {
+  return tool(
+    async ({ reason }) => {
+      await handOffToHuman(options.conversationId, reason)
+      await recordSystemNote(options.conversationId, `ส่งต่อให้พนักงาน — ${reason}`)
+      options.onHandoff(reason)
+
+      // The customer must not be left in silence wondering whether anyone heard
+      // them, so the model is told to acknowledge — briefly, and without having
+      // another go at the question it just admitted it could not answer.
+      return (
+        'Handed over to a member of staff. Reply once, briefly, telling the ' +
+        "customer that a member of staff will follow up shortly. Do not attempt " +
+        'to answer their question and do not promise a time.'
+      )
+    },
+    {
+      name: 'handoff_to_human',
+      description:
+        'Hand the conversation to a member of staff. Call this when search_faq ' +
+        'returns nothing that answers the question, when the customer asks to ' +
+        'speak to a person, when they are complaining or upset, or when they want ' +
+        'something only a person can do — change an order, check something in the ' +
+        'shop, resolve a problem. Prefer this over any answer you are unsure of.',
+      schema: z.object({
+        reason: z
+          .string()
+          .describe(
+            'One short sentence, for the staff member picking this up, saying what ' +
+              'the customer needs and why you could not answer it.'
+          ),
       }),
     }
   )
