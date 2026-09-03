@@ -1,5 +1,7 @@
 import Link from 'next/link'
 import { ConversationList } from '@/components/console/conversation-list'
+import { ConsolePanes } from '@/components/console/console-panes'
+import { Button } from '@/components/ui/button'
 
 export const metadata = { title: 'Inbox · LINE OA Console' }
 
@@ -11,18 +13,13 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
           LINE OA Console
         </Link>
         <form action="/api/auth/logout" method="post">
-          <button type="submit" className="text-xs text-muted-foreground underline-offset-4 hover:underline">
+          <Button type="submit" variant="ghost" size="sm">
             Sign out
-          </button>
+          </Button>
         </form>
       </header>
 
-      <div className="grid min-h-0 md:grid-cols-[320px_minmax(0,1fr)]">
-        <aside className="min-h-0 overflow-y-auto border-r">
-          <ConversationList />
-        </aside>
-        <main className="min-h-0">{children}</main>
-      </div>
+      <ConsolePanes list={<ConversationList />}>{children}</ConsolePanes>
     </div>
   )
 }

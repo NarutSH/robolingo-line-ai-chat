@@ -11,4 +11,9 @@ export interface ChatMessage {
   contentType: string
   createdAt: string
   deliveryStatus: DeliveryStatus
+  /**
+   * Why a send failed, when one did. Recorded already; surfaced so the operator
+   * can tell a transient failure from one that retrying will not fix.
+   */
+  failureReason?: string | null
 }

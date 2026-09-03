@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import type { ConversationSummary } from '@/lib/data/conversations'
 import { useLiveUpdates } from '@/hooks/use-live-updates'
+import { ModeIndicator } from '@/components/console/mode-indicator'
 
 const POLL_MS = 3000
 /** Kept as a safety net once the live channel is carrying updates. */
@@ -65,11 +66,29 @@ export function ConversationList() {
   }, [isLive])
 
   if (error) {
-    return <p className="p-4 text-sm text-red-600 dark:text-red-400">{error}</p>
+    return (
+      <p role="alert" className="p-4 text-sm text-failed-ink">
+        {error}
+      </p>
+    )
   }
 
+  // Shaped like the list it is standing in for, so nothing jumps when the real
+  // rows arrive.
   if (conversations === null) {
-    return <p className="p-4 text-sm text-muted-foreground">Loading conversations…</p>
+    return (
+      <ul className="divide-y" aria-busy="true" aria-label="Loading conversations">
+        {[0, 1, 2, 3, 4].map((row) => (
+          <li key={row} className="flex animate-pulse gap-3 px-4 py-3 motion-reduce:animate-none">
+            <span className="size-10 shrink-0 rounded-full bg-muted" />
+            <span className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
+              <span className="h-3 w-1/3 rounded bg-muted" />
+              <span className="h-3 w-3/4 rounded bg-muted" />
+            </span>
+          </li>
+        ))}
+      </ul>
+    )
   }
 
   if (conversations.length === 0) {
@@ -112,17 +131,8 @@ export function ConversationList() {
                   <span className="truncate text-sm font-medium">{name}</span>
                   <span className="flex shrink-0 items-center gap-1.5">
                     {/* Which conversations need a person, readable without
-                        opening any of them. */}
-                    <span
-                      title={
-                        conversation.mode === 'ai'
-                          ? 'The AI is answering this conversation'
-                          : 'Waiting for you'
-                      }
-                      className={`size-2 rounded-full ${
-                        conversation.mode === 'ai' ? 'bg-emerald-500' : 'bg-amber-500'
-                      }`}
-                    />
+                        opening any of them — and without relying on the colour. */}
+                    <ModeIndicator mode={conversation.mode} className="text-xs" />
                     <span className="text-xs text-muted-foreground tabular-nums">
                       {relativeTime(conversation.lastMessageAt)}
                     </span>

@@ -3,6 +3,11 @@
 import { useCallback, useEffect, useOptimistic, useRef, useState, useTransition } from 'react'
 import type { ChatMessage } from '@/lib/types'
 import { useLiveUpdates } from '@/hooks/use-live-updates'
+import { useStickToBottom } from '@/hooks/use-stick-to-bottom'
+import { MessageBubble, type BubbleTone } from '@/components/chat/message-bubble'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { ModeIndicator } from '@/components/console/mode-indicator'
 
 /**
  * How often to ask when nobody is telling us. Once the live channel is
@@ -15,12 +20,12 @@ const HEARTBEAT_MS = 30000
 
 type Mode = 'ai' | 'manual'
 
-const senderStyle: Record<ChatMessage['sender'], { label: string; className: string }> = {
-  line_user:   { label: 'LINE',     className: 'bg-muted text-foreground' },
-  web_visitor: { label: 'Visitor',  className: 'bg-muted text-foreground' },
-  operator:    { label: 'Operator', className: 'bg-primary text-primary-foreground' },
-  ai:          { label: 'AI',       className: 'bg-emerald-600 text-white' },
-  system:      { label: 'System',   className: 'bg-amber-500/15 text-amber-900 dark:text-amber-200' },
+const presentation: Record<ChatMessage['sender'], { label: string; tone: BubbleTone }> = {
+  line_user: { label: 'LINE', tone: 'other' },
+  web_visitor: { label: 'Visitor', tone: 'other' },
+  operator: { label: 'Operator', tone: 'self' },
+  ai: { label: 'AI', tone: 'ai' },
+  system: { label: 'System', tone: 'note' },
 }
 
 export function MessageThread({
@@ -37,6 +42,7 @@ export function MessageThread({
   const [isPending, startTransition] = useTransition()
   const [isDrafting, setIsDrafting] = useState(false)
   const [isSwitching, setIsSwitching] = useState(false)
+  const [retryingId, setRetryingId] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -89,9 +95,7 @@ export function MessageThread({
     }
   }, [load, isLive])
 
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
-  }, [optimistic.length])
+  useStickToBottom(scrollRef, optimistic.length)
 
   async function switchMode(next: Mode) {
     setIsSwitching(true)
@@ -117,6 +121,12 @@ export function MessageThread({
   }
 
   async function suggestReply() {
+    // The draft is the AI's opinion, not a replacement for the operator's own
+    // work. Filling an empty box is helpful; silently overwriting a half-typed
+    // reply is destroying something they cannot get back.
+    const existing = inputRef.current?.value.trim() ?? ''
+    if (existing && !window.confirm('Replace what you have typed with the AI draft?')) return
+
     setIsDrafting(true)
     try {
       const res = await fetch(`/api/conversations/${conversationId}/suggest`, { method: 'POST' })
@@ -137,6 +147,49 @@ export function MessageThread({
     }
   }
 
+  async function send(text: string): Promise<boolean> {
+    const res = await fetch(`/api/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text }),
+    })
+
+    if (!res.ok) {
+      const json = (await res.json().catch(() => null)) as { error?: string } | null
+      setError(json?.error ?? `Send failed (${res.status})`)
+      return false
+    }
+    setError(null)
+    return true
+  }
+
+  async function refresh() {
+    try {
+      const refreshed = await load()
+      setMessages(refreshed.messages)
+      setMode(refreshed.mode)
+      setRealtimeTopic(refreshed.realtimeTopic)
+    } catch {
+      // The send already reported its own outcome; a failed refresh is the
+      // poll's problem and it will try again in a moment.
+    }
+  }
+
+  /**
+   * Sends the same text again as a *new* message rather than reviving the failed
+   * row. The outbound path writes the row before it sends precisely so a
+   * rejected message stays visible; overwriting it would erase the evidence
+   * that the first attempt happened at all.
+   */
+  function retry(message: ChatMessage) {
+    setRetryingId(message.id)
+    startTransition(async () => {
+      await send(message.content)
+      await refresh()
+      setRetryingId(null)
+    })
+  }
+
   function handleSubmit(formData: FormData) {
     const text = String(formData.get('text') ?? '').trim()
     if (!text) return
@@ -153,28 +206,10 @@ export function MessageThread({
         deliveryStatus: 'queued',
       })
 
-      const res = await fetch(`/api/conversations/${conversationId}/messages`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text }),
-      })
-
-      if (!res.ok) {
-        const json = (await res.json().catch(() => null)) as { error?: string } | null
-        setError(json?.error ?? `Send failed (${res.status})`)
-      } else {
-        setError(null)
-      }
-
-      try {
-        const refreshed = await load()
-        setMessages(refreshed.messages)
-        setMode(refreshed.mode)
-        setRealtimeTopic(refreshed.realtimeTopic)
-      } catch {
-        // The send already reported its own outcome; a failed refresh is the
-        // poll's problem and it will try again in a moment.
-      }
+      await send(text)
+      await refresh()
+      // The next message is nearly always the very next thing they do.
+      inputRef.current?.focus()
     })
   }
 
@@ -183,85 +218,116 @@ export function MessageThread({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center justify-between gap-3 border-b px-4 py-2">
-        <span className="flex items-center gap-2 text-xs">
-          <span
-            aria-hidden
-            className={`size-2 rounded-full ${aiIsAnswering ? 'bg-emerald-500' : 'bg-amber-500'}`}
-          />
-          <span className="font-medium">
-            {aiIsAnswering ? 'The AI is answering' : 'You are answering'}
-          </span>
-        </span>
-        <button
+        <ModeIndicator mode={mode} detail="full" className="text-xs" />
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
           onClick={() => switchMode(aiIsAnswering ? 'manual' : 'ai')}
           disabled={isSwitching}
-          className="rounded-md border px-2.5 py-1 text-xs font-medium hover:bg-muted disabled:opacity-50"
         >
           {aiIsAnswering ? 'Take over' : 'Hand back to the AI'}
-        </button>
+        </Button>
       </div>
 
-      <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+      <div
+        ref={scrollRef}
+        // Announced rather than merely rendered: an operator using a screen
+        // reader would otherwise have no way to know a customer had replied.
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions"
+        aria-label="Conversation"
+        className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4"
+      >
         {optimistic.length === 0 && (
           <p className="text-sm text-muted-foreground">No messages in this conversation yet.</p>
         )}
 
         {optimistic.map((message) => {
-          const style = senderStyle[message.sender]
+          const { label, tone } = presentation[message.sender]
           const isOutbound = message.sender !== 'line_user' && message.sender !== 'web_visitor'
+          const failed = message.deliveryStatus === 'failed'
+
           return (
-            <div key={message.id} className={`flex ${isOutbound ? 'justify-end' : 'justify-start'}`}>
-              <div className={`flex max-w-[75%] flex-col gap-1 ${isOutbound ? 'items-end' : 'items-start'}`}>
-                <span className="px-1 text-[11px] font-medium text-muted-foreground">
-                  {style.label}
-                  {message.deliveryStatus === 'queued' && ' · sending…'}
-                  {message.deliveryStatus === 'failed' && ' · failed'}
-                </span>
-                <div
-                  className={`w-fit rounded-xl px-3 py-2 text-sm whitespace-pre-wrap break-words ${style.className} ${
-                    message.deliveryStatus === 'failed' ? 'ring-1 ring-red-500' : ''
-                  }`}
-                >
-                  {message.content}
-                </div>
-              </div>
-            </div>
+            <MessageBubble
+              key={message.id}
+              message={message}
+              align={isOutbound ? 'end' : 'start'}
+              tone={tone}
+              label={label}
+              announceAs={label}
+              status={
+                message.deliveryStatus === 'queued'
+                  ? 'Sending…'
+                  : failed
+                    ? `Not delivered${message.failureReason ? ` — ${message.failureReason}` : ''}`
+                    : undefined
+              }
+              action={
+                failed ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="xs"
+                    onClick={() => retry(message)}
+                    disabled={retryingId === message.id}
+                  >
+                    {retryingId === message.id ? 'Sending…' : 'Send again'}
+                  </Button>
+                ) : undefined
+              }
+            />
           )
         })}
       </div>
 
       {error && (
-        <p role="alert" className="border-t border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-700 dark:text-red-300">
-          {error}
-        </p>
+        <div
+          role="alert"
+          className="flex items-start justify-between gap-3 border-t border-failed/30 bg-failed/10 px-4 py-2 text-sm text-failed-ink"
+        >
+          <p>{error}</p>
+          <Button type="button" variant="ghost" size="xs" onClick={() => setError(null)}>
+            Dismiss
+          </Button>
+        </div>
       )}
 
       <form action={handleSubmit} className="flex gap-2 border-t p-3">
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="lg"
           onClick={suggestReply}
           disabled={isDrafting}
-          title="Draft a reply with the AI. Nothing is sent until you press Send."
-          className="rounded-md border px-3 py-2 text-sm font-medium whitespace-nowrap hover:bg-muted disabled:opacity-50"
+          className="whitespace-nowrap"
         >
           {isDrafting ? 'Drafting…' : 'Suggest a reply'}
-        </button>
-        <input
+        </Button>
+        <Input
           ref={inputRef}
           name="text"
           autoComplete="off"
+          enterKeyHint="send"
+          aria-label="Your reply"
           placeholder={channel === 'web' ? 'Reply in their browser…' : 'Reply to this person on LINE…'}
-          className="flex-1 rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          size="lg"
+          className="flex-1"
         />
-        <button
-          type="submit"
-          disabled={isPending}
-          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
-        >
+        <Button type="submit" size="lg" disabled={isPending}>
           {isPending ? 'Sending…' : 'Send'}
-        </button>
+        </Button>
       </form>
+
+      {/* What the draft button does, in the open. This used to be a title
+          attribute, which is unreachable on a touch device and unreliable
+          everywhere else — and it is the reassurance that makes the button
+          safe to press. */}
+      <p className="px-3 pb-3 text-xs text-muted-foreground">
+        A draft is written by the AI and goes in the box. Nothing reaches the
+        customer until you press Send.
+      </p>
     </div>
   )
 }

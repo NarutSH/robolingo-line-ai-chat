@@ -2,6 +2,8 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 export function LoginForm() {
   const router = useRouter()
@@ -31,27 +33,30 @@ export function LoginForm() {
         </p>
       </div>
 
-      <input
-        name="password"
-        type="password"
-        autoComplete="current-password"
-        placeholder="Operator password"
-        className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      />
+      <div className="space-y-1.5">
+        <label htmlFor="operator-password" className="text-sm font-medium">
+          Operator password
+        </label>
+        <Input
+          id="operator-password"
+          name="password"
+          type="password"
+          autoComplete="current-password"
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? 'sign-in-error' : undefined}
+          className="h-9"
+        />
+      </div>
 
       {error && (
-        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+        <p id="sign-in-error" role="alert" className="text-sm text-failed-ink">
           {error}
         </p>
       )}
 
-      <button
-        type="submit"
-        disabled={isPending}
-        className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
-      >
+      <Button type="submit" size="lg" disabled={isPending} className="w-full">
         {isPending ? 'Signing in…' : 'Sign in'}
-      </button>
+      </Button>
     </form>
   )
 }

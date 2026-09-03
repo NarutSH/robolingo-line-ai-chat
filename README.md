@@ -184,7 +184,7 @@ to ask for one.
 ## Tests
 
 ```bash
-bun test          # the suite
+bun run test      # the suite (not `bun test`, which runs Bun's own runner)
 bun run typecheck # tsc --noEmit
 ```
 

@@ -6,7 +6,7 @@ export async function listMessages(conversationId: string, limit = 100): Promise
   const supabase = createAdminClient()
   const { data, error } = await supabase
     .from('messages')
-    .select('id, conversation_id, sender, content, content_type, created_at, delivery_status')
+    .select('id, conversation_id, sender, content, content_type, created_at, delivery_status, delivery_error')
     .eq('conversation_id', conversationId)
     .order('created_at', { ascending: false })
     .limit(limit)
@@ -22,6 +22,7 @@ export async function listMessages(conversationId: string, limit = 100): Promise
       contentType: row.content_type,
       createdAt: row.created_at,
       deliveryStatus: (row.delivery_status ?? 'sent') as ChatMessage['deliveryStatus'],
+      failureReason: row.delivery_error,
     }))
     .reverse()
 }
