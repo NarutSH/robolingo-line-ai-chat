@@ -1,354 +1,306 @@
 # Webchat for a LINE Official Account
 
-A coffee shop's customer conversations, in one inbox. Messages arrive from the
-shop's LINE Official Account and from an anonymous chat widget on its website;
-an AI agent answers first, and a member of staff can take any conversation over
-at any point.
+One inbox for a coffee shop's customers. Messages come from the shop's LINE
+Official Account and from a chat widget on its website. An AI answers first. A
+member of staff can take over at any time.
 
 | | |
 |---|---|
-| **Webchat console** | https://robolingo-line-ai-chat.vercel.app/console |
-| **Web chat widget** | https://robolingo-line-ai-chat.vercel.app/chat |
-| **LINE Official Account** | _(add the OA's link here before submitting)_ |
+| **Console** | https://robolingo-line-ai-chat.vercel.app/console |
+| **Chat widget** | https://robolingo-line-ai-chat.vercel.app/chat |
+| **LINE Official Account** | _(add the OA link here before submitting)_ |
 | **Repository** | https://github.com/NarutSH/robolingo-line-ai-chat |
 
-> **The console password is sent separately, not in this repository.** If you
-> open `/console` and it asks for a password, that is the login working — the
-> password is in the message this link came with.
-
-Built with Next.js 16 (App Router), TypeScript, Supabase Postgres, the LINE
-Messaging API, and LangChain v1 over OpenRouter. Deployed on Vercel.
+> The console password is sent separately, not in this repo. If `/console` asks
+> for a password, the login is working. The password came with this link.
 
 ---
 
-## How a message gets in
+## Architecture
+
+```
+   LINE app                     Web browser
+       │                             │
+       │ webhook                     │ fetch
+       ▼                             ▼
+┌─────────────────────────────────────────────┐
+│              Next.js 16 (App Router)        │
+│                on Vercel                    │
+│                                             │
+│  /api/line/webhook    /api/chat/messages    │
+│  /api/conversations   /api/faq              │
+│  /api/assistant       /console  /chat       │
+└───────┬─────────────────────────┬───────────┘
+        │                         │
+        │ secret key              │ LangChain v1
+        ▼                         ▼
+┌───────────────────┐   ┌─────────────────────┐
+│  Supabase Cloud   │   │     OpenRouter      │
+│                   │   │                     │
+│  Postgres + RLS   │◀──│  agent + 3 tools    │
+│  Realtime         │   │  search_faq         │
+│  Storage          │   │  show_image         │
+└───────────────────┘   │  handoff_to_human   │
+                        └─────────────────────┘
+```
+
+**Next.js 16, App Router, TypeScript.** Route handlers do all the work. The
+browser never talks to the database directly. Server code runs on Vercel Fluid
+compute, which lets a route return a response and keep working after it.
+
+**Supabase Cloud** is the only store. Postgres holds every row. Realtime pushes
+new messages to the console. Storage holds pictures. Some logic lives in the
+database as plpgsql, because it has to be atomic.
+
+**OpenRouter through LangChain v1.** `createAgent` builds a ReAct agent with
+three tools. OpenRouter means the model can be swapped by changing one
+environment variable. The agent may only speak from the shop's own FAQ.
+
+**Bun** installs and runs everything. **Vitest** runs the tests.
+
+---
+
+## How a message comes in
 
 ```
 LINE  ──POST──▶  /api/line/webhook
                       │
-                      ├─ verify X-Line-Signature over the raw body
-                      ├─ ingest_line_message()  ← one atomic call
-                      └─ 200 OK  ──────────────────────┐
-                                                       │
-                      after() ─── refresh profile      │  response already sent
-                              └── AI answers ──────────┘
+                      ├─ check X-Line-Signature over the raw bytes
+                      ├─ ingest_line_message()   ← one atomic call
+                      └─ 200 OK ────────────────────────┐
+                                                        │
+                      after() ─── refresh profile       │  reply already sent
+                              └── AI answers ───────────┘
 ```
 
-Three decisions shape this route, and they are all about the 200.
+Three choices shape this route. All of them are about the 200.
 
 **The signature is checked against the exact bytes that arrived.** The body is
-read once, as text, and the HMAC is computed over that string — reading it again
-as JSON first would change what is being verified. A bad signature returns 401
-rather than a quiet 200, so it shows up in LINE's own error statistics instead
-of vanishing.
+read once, as text. The HMAC is computed over that string. Reading it as JSON
+first would change what is being checked. A bad signature returns 401, not a
+quiet 200, so it shows up in LINE's own error stats.
 
-**Everything the request phase does is atomic and fast.** A single plpgsql
-function claims the webhook event, upserts the contact, finds or creates their
-conversation, and records the message. Claiming the event id in the same
-transaction as the write is what makes LINE's redelivery safe: a repeat arrives,
-finds the event already claimed, and returns 200 without doing anything twice.
+**The request phase is atomic and fast.** One plpgsql function claims the event
+id, upserts the contact, finds or creates the conversation, and writes the
+message. Claiming the event id in the same transaction as the write is what
+makes LINE's redelivery safe. A repeat arrives, finds the id taken, and returns
+200 without doing anything twice.
 
-**Nothing slow happens before the 200.** LINE expects a response within about a
-second and retries anything slower — so the profile lookup and the AI run both
-go in `after()`, which Vercel's Fluid compute runs after the response is on the
-wire. They are two separate `after()` calls, not one: a profile lookup that
-fails must not cost the customer their answer.
+**Nothing slow happens before the 200.** LINE wants a reply in about a second
+and retries anything slower. So the profile lookup and the AI run both go in
+`after()`. They are two separate calls, not one: a failed profile lookup must
+not cost the customer their answer.
 
-## How a message gets out
+## How a message goes out
 
-Every outbound message — from the agent, from an operator, from the system —
-goes through one path that records the row, sends it, marks it sent or failed,
-and updates the conversation preview. **The order is load-bearing:** the row is
-written *before* the send, so a message LINE rejects stays visible in the thread
-marked as failed, instead of disappearing into the logs while the operator
-believes it went out.
+Every outbound message uses one path: `lib/messaging/dispatch.ts`. The agent,
+an operator and the system all go through it.
 
-The reply-versus-push rule lives in exactly one place, because getting it wrong
-is expensive in two different ways:
+The row is written **before** the send. A message that LINE rejects stays on
+screen, marked failed, with the reason. The operator can send it again.
 
-- A **reply token** is valid for one minute, single use, and costs no quota. The
-  AI answers seconds after the webhook, so its reply almost always uses one.
-- A **push** has no expiry but is metered. An operator answering minutes later
-  has no live token, so their message pushes — with the message row's id as
-  `X-Line-Retry-Key`, so a retried request cannot send twice.
+Reply token or push is decided here and nowhere else. A reply token is free but
+dies after about a minute, so the funnel uses it inside a 50 second margin and
+falls back to a push. The message id goes out as `X-Line-Retry-Key`, so a retry
+after a timeout cannot send the same text twice.
 
-The margin is 50 seconds rather than 60, so a slow model call cannot land just
-past the boundary holding a token LINE has already expired. If a token turns out
-to be dead anyway, the send falls back to a push rather than losing the message.
+Web conversations are marked sent on write. There is nothing to deliver: the
+widget polls, and Realtime tells it sooner.
 
-A **web** conversation has nothing to call out to. The message row *is* the
-delivery, and the visitor's page reads it — so it is marked sent as soon as it
-is written, and the same code path serves both channels.
+## Who answers
 
-## Who is answering
+`conversations.mode` is `ai` or `manual`. That is one bit, and one bit is not
+enough for the inbox.
 
-Every conversation is in one of two modes.
+Two very different conversations are both `manual`: one the AI handed over
+because it was stuck, and one an operator simply picked up. The first has
+somebody waiting and nobody helping. `handoff_reason` tells them apart, and
+`conversationState()` turns the pair into three states: **AI**, **You**,
+**Needs you**. The inbox sorts escalations first.
 
-**`ai`** — the agent answers and staff supervise. This is where new
-conversations start.
+An AI run takes a claim with a conditional update. The claim expires after two
+minutes, and a run that errored can be claimed again at once. Before sending,
+the run reads the mode a second time. If an operator took over while the model
+was thinking, the reply is thrown away.
 
-**`manual`** — only a person replies. A conversation gets here two ways: an
-operator presses **Take over**, or the agent hands off by itself.
-
-The agent hands off when `search_faq` returns nothing that answers the question,
-when the customer asks for a person, when they are complaining, or when they
-want something only a person can do. It records why, writes a note into the
-thread so whoever picks it up sees the reason in place, and — importantly — it
-still sends one short acknowledgement. A customer who is handed over and then
-hears nothing has no way to tell they were heard, which is worse than the wrong
-answer the handoff exists to avoid.
-
-Two things stop a customer being answered twice:
-
-- **A claim.** A run takes the conversation with a conditional update. A second
-  webhook arriving at the same instant blocks on the row lock, re-reads it, sees
-  the claim and exits. The claim expires after two minutes, and an errored run
-  is claimable immediately — a run killed by a deploy would otherwise leave a
-  conversation permanently mute, which is a far worse failure than the double
-  reply the claim prevents.
-- **A late re-read.** The mode is checked again immediately before sending. An
-  operator who took over while the model was still thinking has already decided
-  they are handling it, and a reply landing on top of them is worse than no
-  reply at all — so that reply is discarded rather than sent.
-
-**Suggest a reply** runs the same agent and puts the result in the operator's
-composer. It writes nothing and sends nothing. Pressing send stays a person's
-decision, which is the whole reason the button exists instead of the AI simply
-answering. The handoff tool is withheld on that path — the operator is already
-the human it would hand to.
-
-## Knowing who is waiting
-
-Two things put a conversation in front of a person, and they are not the same
-job. An operator pressing **Take over** is work someone has already chosen. The
-agent handing off is a question nobody has picked up yet — and it is the one
-that gets forgotten, because until it is answered nothing in the conversation
-moves and recency sinks it under whatever the agent is chatting about now.
-
-Both leave the conversation in `manual`, so the mode alone cannot tell them
-apart. `handoff_reason` can: set means the agent stepped back, null means a
-person took it. The inbox reads that and shows three states rather than two —
-**Needs you**, **You**, **AI** — each as words beside its dot, because this is
-the fact the whole list is scanned for and a colour alone does not survive a
-colour-vision deficiency.
-
-The queue leads with what needs a person and orders by recency within each
-group, so an escalation from an hour ago sits above a conversation the agent is
-happily handling. That ordering is done after the query rather than in it: it
-sorts on a derived state rather than a column, and a hundred rows is nothing.
-
-**The reason is shown where the decision is made.** It was already written into
-the thread as a system note, which meant opening every conversation to find out
-why it wanted you. It now sits in the list row and again at the top of the
-thread, arriving on the same poll as the messages so a handoff that happens
-while you are reading appears without a reload.
+**Suggest a reply** runs the same agent, writes nothing and sends nothing. It
+also gets no handoff tool: the operator is already the human it would hand to.
 
 ## When a customer types in bursts
 
-People send a thought in pieces: "ขอถามหน่อย", then "ร้านเปิดกี่โมง", then "แล้วมีที่จอดรถไหม".
-Answering the first piece answers a third of the question, and the pieces behind
-it used to get nothing at all — the first run claimed the conversation and every
-run behind it found it busy and exited.
+People send three short messages, not one long one. Answering each is three
+replies to one thought.
 
-So every run pauses before it claims anything, and then checks whether the
-customer has said anything since it started. If they have, it stands down; the
-run belonging to the newest message carries on alone. That survivor reads the
-whole history a moment later, so the three messages arrive at the model as three
-turns and come back as one answer. Nothing stitches them together, because
-nothing has to.
+Every run waits `AI_DEBOUNCE_MS` (4 seconds; 0 in tests), then checks for a
+newer inbound message. If there is one, this run stops. Only the newest run
+answers, and it sees the whole burst in its history.
 
-**The pause comes before the claim, not after,** and that ordering is the whole
-fix. Claiming first is what turned the second and third message into silence.
+The wait is **before** the claim, on purpose. Claiming first made every message
+after the first one silent.
 
-The wait is `AI_DEBOUNCE_MS`, four seconds by default. It is a judgement about
-people rather than a fact about the system, which is why it is configuration:
-long enough to catch a burst, short enough that someone who sent one message is
-not left staring at the screen. It costs the single-message case those four
-seconds, and that is the trade being made deliberately.
+## What the bot knows
 
-If two messages happen to land in the same millisecond the tie breaks
-arbitrarily — and harmlessly. Whichever run wins reads both messages, so the
-customer still gets exactly one answer covering everything they said.
+Everything comes from the `faq_entries` table, through the `search_faq` tool.
+If nothing matches, the bot says it does not know and hands over. It never
+guesses an opening time or a price.
 
-## What the agent knows
+Matching runs **backwards**. Thai is written without spaces, so a Thai question
+arrives as one long token that nothing in core Postgres can split. Instead each
+entry carries short tags, and a tag scores if it appears **inside** the
+customer's message. `เปิด` is inside `เปิดกี่โมง`, and `hours` is inside `what
+are your hours`. One rule, both languages, no word splitter.
 
-Everything the agent can say about the shop comes from one table, looked up
-through one tool. It is instructed never to state an opening time, price,
-promotion or policy that did not come back from that lookup: an invented price
-is worse than an admission of not knowing, because the shop can be held to it.
+Score is the **sum of the lengths** of the tags that matched, not the count. A
+count treats every tag as equal proof, which it is not: `ไป` ("go") sits inside
+almost any Thai sentence, and it once beat a real match on a question about
+dogs. Length is a fair stand-in for how specific a word is.
 
-**The FAQ match runs backwards, and that is the interesting part.** Thai is
-written without spaces, so a Thai question arrives as a single unsegmented
-token — `เปิดกี่โมง` cannot be split into words by anything in core Postgres,
-and full-text search would index it as one meaningless lexeme. Splitting the
-*query* is hopeless. So each entry carries short tags instead, and a tag scores
-if it appears **inside** the customer's question: `เปิด` is a substring of
-`เปิดกี่โมง`, and `hours` is a substring of `what are your hours`. One rule,
-both languages, no segmenter and no extension.
-
-Matches are scored by the summed length of the matching tags rather than by how
-many matched, because tags are not equal evidence. A first version counted them,
-and `พาหมาไปได้ไหม` — "may I bring my dog" — matched the *location* entry through
-its tag `ไป`, "go", which is a substring of almost any Thai sentence.
-
-`pg_trgm` and `unaccent` are deliberately unused: on Supabase Cloud they live in
-the `extensions` schema, which is not on a migration session's `search_path`, so
-depending on them makes migrations fail in a way that is confusing to diagnose.
-At a couple of dozen entries this is not a compromise — it is the right amount
-of machinery. Embeddings become worth their weight when the corpus is too large
-for a person to skim.
+`pg_trgm` and `unaccent` are avoided on purpose. They live in a schema that is
+not on a migration's `search_path` on Supabase Cloud, which breaks migrations.
 
 ## Teaching the bot
 
-`/console/training` is the whole of the bot's knowledge, editable. Everything
-the agent is allowed to say comes from `faq_entries`, so this screen is where a
-new answer, a corrected price or a changed opening time happens — a data edit,
-not a deploy.
+`/console/training` is a two-pane board. Answers on the left, the one being
+edited on the right. The URL holds what is open, so reload, back and a pasted
+link all land in the same place.
 
-The screen exists because of what the grounding rule costs. The agent refuses to
-answer anything the FAQ does not cover, which is the right trade, but it means
-the shop's only way to widen what the bot can do was a SQL statement. Now it is
-a form.
+**Trigger words are the main field.** They are the only thing that decides which
+answer wins, so they sit above the answer text. Each word is a chip showing the
+points it adds when it matches.
 
-**A picture needs a name before it can be attached.** `search_faq` tells the
-agent a picture exists and `show_image` takes that name and nothing else, so an
-entry with no name is one the agent could never ask for. The console refuses the
-upload rather than storing a file nothing can reach, and refuses to remove the
-name while a picture is still attached.
+**Two warnings appear while you type.** A word too short to mean anything, and a
+word another live answer already claims. Both come from real bugs: a migration
+exists whose only job is to strip `ไป` and `ทาง` from every entry.
 
-The tag guidance is on the form, next to the field, because it is where the
-ranking goes wrong in practice: tags match by appearing *inside* what the
-customer typed, so short and specific beats long, and a very common word like
-`ไป` matches almost every sentence.
+**Try a Question** (⌘K) runs the real `search_faq` and shows what comes back,
+with scores. It calls the same function the agent calls. A copy in TypeScript
+would drift, and then the shop would be tuning against the wrong thing.
+
+Live and Off are two lists, because `is_active` is a `WHERE` clause. An answer
+that is off is invisible to the bot, not a faded version of a live one.
+
+## Who the bot is
+
+`/console/assistant` holds the system prompt and a few voice settings. They live
+in `app_config` and are read on every run, so a change needs no deploy.
+
+The particle setting matters most. Thai forces a choice at the end of every
+sentence, and nothing used to make it. The model picked afresh each turn, so one
+reply could quote an FAQ answer written with ครับ inside a sentence ending ค่ะ.
+It is a radio group with three options, not a text box, because there are only
+three right answers.
+
+The instructions are editable in full. When an edit drops a safety rule — the
+FAQ tool, the "never state a fact the FAQ did not give" rule, or the handoff —
+the screen names the rule and says what it was holding. It does not block the
+save. The shop owns what its assistant says. It must not lose a rule without
+noticing.
+
+A setting that was never written falls back to the value in the code, so a shop
+that never opens this screen gets the assistant it always had.
 
 ## Pictures
 
-Three things send one: an operator attaching a photo, the agent showing what the
-shop has published, and a customer sending one in.
+Pictures use the same outbound funnel. `dispatchOutbound` takes an `imageUrl`,
+and `sendToLine` builds an image message instead of a text one. There is no
+second path.
 
-**The URL never goes in `content`.** That column is fed straight to the model by
-the history builder and straight to the conversation list as the preview, so a
-URL in there would read to the agent as something the customer said and to the
-operator as the text of the last message. `content` keeps holding words a person
-would read — `[image]` — and the file gets a column of its own.
+The URL lives in `messages.media_url`, never in `content`. `content` is what the
+model reads and what the inbox preview shows. A URL in there would look like
+something the customer said.
 
-**The bucket is public, and that is a decision rather than a shortcut.** LINE
-fetches `originalContentUrl` from its own servers holding none of our
-credentials, so a signed URL would turn a delivered message into a broken image
-the moment it expired. Reads are open to anyone with the URL; every write goes
-through the secret key on the server and no storage policy is added. Same shape
-as the tables: unreachable except through us.
+Files sit in a public `chat-media` bucket, because LINE fetches the image from
+its own servers with none of our credentials. A signed URL would expire before
+it was used.
 
-**The agent picks whether, never which.** An FAQ entry can carry a picture, and
-`search_faq` says so when it does. `show_image` takes only the name the lookup
-just handed back and reads the URL from the row — so the rule that stops the
-agent inventing an opening time stops it inventing a picture, by construction.
-It is told not to describe what is in the image, because it has not seen it. The
-picture goes out *after* the sentence introducing it, as a push: the written
-reply has just spent the single-use reply token.
+`show_image` can only name an FAQ entry that `search_faq` just returned. Same
+rule as everything else: the bot can only pass on what the lookup gave it.
 
-**Pictures are shrunk in the browser before they are sent.** Not for tidiness:
-an oversized request body is refused at the edge before the route handler runs
-at all, and what comes back is a plain-text 413 with nothing an operator could
-act on. Re-encoding to a JPEG under a couple of megabytes sidesteps that, LINE's
-own ceiling, and the bucket's, and it makes the upload quicker besides. Our own
-size check sits deliberately *below* the platform's, so the refusal that
-actually happens is the one with a sentence attached. A side effect worth
-having: a photo straight off a phone that LINE would not accept arrives as one
-it will.
-
-**A customer's picture is copied rather than linked.** LINE releases message
-content only to the channel token and only for a while, so a URL pointing at
-LINE would be both unauthorised for the operator's browser and, before long,
-dead. The bytes are fetched in their own `after()` — a picture LINE will not
-hand over must not cost the customer their answer — and a failed copy leaves the
-message reading `[image]`, exactly as it did before any of this existed.
+Photos are shrunk in the browser before upload. The platform rejects a large
+body before our handler runs, with a plain-text 413 nobody can act on.
 
 ## Data
 
-Five tables plus the FAQ. `conversations` is the spine: it carries the channel
-(`line` or `web`), the mode, the AI run state, and the handoff reason.
-`messages` records direction, sender (`line_user`, `web_visitor`, `operator`,
-`ai`, `system`), delivery status and the LINE ids on both sides.
-`line_webhook_events` exists solely so redelivery has something to collide with.
+Six tables. `conversations` is the spine: channel, mode, AI run state, handoff
+reason. `messages` holds direction, sender, delivery status and the LINE ids on
+both sides. `line_webhook_events` exists only so redelivery has something to
+collide with. `faq_entries` is what the bot knows. `app_config` is who it is.
+`line_users` is the contact.
 
-**RLS is enabled on every table with zero policies.** Nothing reaches a row
-except the server holding the secret key. The browser never queries the database
-directly, so there is no policy surface to get wrong — the API routes are the
-only way in, and they check authorisation themselves.
+**RLS is on for every table, with zero policies.** Nothing reaches a row except
+the server holding the secret key. The browser holds only the publishable key
+and uses it for Realtime alone. There is no policy surface to get wrong.
 
-**Every schema change is a migration file created with the Supabase CLI**
-(`bunx supabase migration new …`, applied with `db push`). Nothing is typed into
-the SQL editor, so the database's state is reproducible from the repository and
-reviewable in a diff. When a migration that had already been applied turned out
-to have a ranking bug, it was fixed forward in a new migration rather than
-edited in place.
+`tests/row-level-security.test.ts` keeps it that way. It asks with the browser's
+own key and expects nothing back — from every table, from the `search_faq`
+grant, and from the media bucket. Without it, a new table that forgot
+`ENABLE ROW LEVEL SECURITY` would ship green.
+
+**Every schema change is a migration file made with the Supabase CLI.** Nothing
+is typed into the SQL editor, so the database can be rebuilt from the repo and
+reviewed in a diff. An applied migration is never edited. When the FAQ ranking
+turned out to be wrong, it was fixed forward in a new file.
 
 ## Who can see what
 
 **Operators** sign in with a shared password against an HMAC-signed cookie.
-There is deliberately no user system: the brief asks for a working webchat, not
-identity management. It exists because the deployed URL is handed to a stranger
-and the console shows real people's names and photographs. `proxy.ts` redirects
-on a missing cookie, but that is only a cheap guess — every protected route
-calls `requireOperator()` itself, which is the authoritative check.
+There is no user system on purpose: the brief asks for a webchat, not identity
+management. The login exists because the URL goes to a stranger and the console
+shows real names and photos. `proxy.ts` redirects when the cookie is missing,
+but that is only a cheap guess. Every protected route calls `requireOperator()`
+itself, and that is the real check.
 
 **Web visitors** are only ever "the same browser as last time": a signed cookie
-holding a session id, signed with the same secret over a different input space
-so neither cookie can be replayed as the other. The visitor routes accept no
-conversation id from the client at all. That is what makes reaching another
-visitor's conversation impossible rather than merely forbidden — there is no way
-to ask for one.
+holding a session id. It uses the same secret as the operator cookie but signs a
+different input space, so neither can be replayed as the other. Visitor routes
+accept no conversation id from the client at all. Reaching another visitor's
+conversation is not forbidden, it is impossible — there is no way to ask.
 
 ## Tests
 
 ```bash
-bun run test      # the suite (not `bun test`, which runs Bun's own runner)
-bun run typecheck # tsc --noEmit
+bun run test       # 133 tests. Not `bun test`, which runs Bun's own runner
+bun run typecheck
+bun run lint
 ```
 
-**One seam: the route handlers, driven directly.** A test imports `POST` or
-`GET` from a route module and calls it with a constructed `Request`, which
-exercises routing, signature verification, auth, validation, persistence and
-outbound dispatch together — the behaviour, rather than the units it is made of.
+**One seam: the route handlers, called directly.** A test imports `POST` or
+`GET` from a route module and calls it with a real `Request`. That covers
+routing, signature checks, auth, validation, writes and outbound dispatch at
+once — behaviour, not units.
 
-Everything external reaches the network through `fetch`: the LINE SDK (no
-runtime dependencies as of v11), `supabase-js`, and the OpenRouter client all
-do. So a single interceptor controls every boundary at once. LINE and OpenRouter
-are faked; **Supabase is left real**, because the atomic claim that makes
-redelivery safe is plpgsql and a faked database would be testing a
-reimplementation of it. Any other host is refused outright rather than quietly
-allowed through, so a test can never spend money on a live model call.
+Everything external goes through `fetch`, so one interceptor controls every
+boundary. LINE and OpenRouter are faked. **Supabase is left real**, because the
+atomic claim and the FAQ ranking are plpgsql and a fake would test a
+reimplementation. Any other host is refused, so a test can never spend money on
+a real model call.
 
-Tests share the one cloud project with the demo data, so isolation is by
-convention: every test contact is minted under a reserved prefix and removed by
-cascade, anonymous conversations are cleaned up by the session ids the routes
-handed out, and the sweep runs before the suite as well as after — a crashed run
-must not leave rows in the inbox a reviewer opens.
+Tests share one cloud project with the demo data, so isolation is by convention.
+Test contacts use a reserved prefix. Anonymous conversations are cleaned up by
+the session ids the routes handed out. The sweep runs before the suite as well
+as after: a crashed run must not leave rows in the inbox a reviewer opens.
 
-A few assertions sit below that seam on purpose, and say so where they are: the
-FAQ ranking and the concurrency claim are both guarantees that live in the
-database, and two webhooks arriving at the same instant cannot be staged through
-sequential handler calls.
+A few assertions sit below the route seam and say so. The FAQ ranking and the
+concurrency claim are guarantees that live in the database, and two webhooks
+arriving at the same instant cannot be staged through sequential calls.
 
 ## Running it
 
 ```bash
 bun install
-cp .env.example .env.local     # then fill it in
+cp .env.example .env.local      # then fill it in
 bun run dev
 ```
 
-`bunx supabase link` and `bunx supabase db push` apply the schema to a Supabase
-project. Point the LINE channel's webhook at `/api/line/webhook`.
+Apply the schema with `bunx supabase link` and `bunx supabase db push`. Point
+the LINE channel's webhook at `/api/line/webhook`.
 
-Environment is validated once at import, so a misconfigured deploy fails at boot
-with the offending variable named, rather than at the first webhook. A localhost
-Supabase URL on a deployed instance is rejected outright — it is valid-looking,
-boots cleanly, and then makes every query die as `fetch failed` after seven
-seconds with no hint as to why.
+The environment is checked once at import, so a bad deploy fails at boot and
+names the variable. A localhost Supabase URL on a deployed instance is rejected
+outright: it looks valid, boots fine, then makes every query die as
+`fetch failed` after seven seconds with no clue why.
 
-`/api/health` reports which capabilities are configured and whether the database
-is reachable, so a broken deploy can be diagnosed without reading logs. Without
-an OpenRouter key the app runs exactly as it did before the agent existed:
-messages arrive, staff reply, and nothing throws.
+`/api/health` reports what is configured and whether the database answers, so a
+broken deploy can be diagnosed without reading logs. With no OpenRouter key the
+app behaves as it did before the agent existed: messages arrive, staff reply,
+nothing throws.
