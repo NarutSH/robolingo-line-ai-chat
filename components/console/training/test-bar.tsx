@@ -88,9 +88,7 @@ export function TestBar({
         onChange={(event) => onQueryChange(event.target.value)}
         placeholder="พาหมาไปได้ไหม…"
       />
-      <p className="text-xs text-muted-foreground">
-        Runs the real lookup. Nothing is sent to anybody.
-      </p>
+      <p className="text-xs text-muted-foreground">Nothing is sent to anybody.</p>
 
       <div aria-live="polite" aria-busy={isRunning}>
         {asked && error && (

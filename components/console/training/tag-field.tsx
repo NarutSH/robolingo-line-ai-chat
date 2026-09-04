@@ -68,6 +68,7 @@ export function TagField({
                   what the ranking adds. */}
               <span
                 aria-label={`worth ${tagWeight(tag)} points`}
+                title={`Adds ${tagWeight(tag)} to the score when it matches. Longer words count for more.`}
                 className="rounded-full bg-background/70 px-1.5 text-[10px] tabular-nums opacity-70"
               >
                 {tagWeight(tag)}
@@ -134,12 +135,6 @@ export function TagField({
         </ul>
       )}
 
-      <p className="text-xs text-muted-foreground">
-        A word matches when it appears <em>inside</em> what the customer typed, so{' '}
-        <code translate="no">เปิด</code> catches <code translate="no">เปิดกี่โมง</code>. The number
-        on each word is what it adds to the score when it matches — longer words count for more,
-        which is how a specific word beats a common one.
-      </p>
     </div>
   )
 }

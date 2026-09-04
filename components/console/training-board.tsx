@@ -383,7 +383,7 @@ export function TrainingBoard() {
         <div className="min-w-0">
           <h1 className="text-lg font-semibold">Training</h1>
           <p className="text-sm text-balance text-muted-foreground">
-            Everything the bot is allowed to say comes from this list. Nothing here needs a deploy.
+            Everything the bot can say comes from this list.
           </p>
         </div>
         <Button type="button" size="lg" onClick={() => select('new')}>

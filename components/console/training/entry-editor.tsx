@@ -177,7 +177,7 @@ export function EntryEditor({
         <Field
           id={`${ids}-question`}
           label="Question"
-          hint="The way a customer would put it. It also counts as a trigger word on its own, worth ten points when the whole thing appears in a message."
+          hint="The way a customer would put it."
           error={errors.question}
         >
           <Input
@@ -196,7 +196,7 @@ export function EntryEditor({
         <Field
           id={`${ids}-tags`}
           label="Trigger Words"
-          hint="What decides whether this is the answer the customer gets. Nothing else on this form does."
+          hint="These decide which answer the customer gets. Longer words score higher."
         >
           <TagField
             id={`${ids}-tags`}
@@ -209,7 +209,6 @@ export function EntryEditor({
         <Field
           id={`${ids}-answer`}
           label="Answer"
-          hint="Passed on close to word for word. Writing both languages here is the surest way to control what the customer reads."
           error={errors.answer}
         >
           <Textarea
@@ -292,8 +291,7 @@ export function EntryEditor({
                 className="size-16 shrink-0 rounded-md border object-cover"
               />
               <p className="min-w-0 flex-1 text-xs text-muted-foreground">
-                The bot sends this when a picture would answer better than words. It asks for it by
-                the name <code translate="no">{draft.slug || entry.slug}</code>.
+                Sent when a picture answers better than words.
               </p>
               <Button type="button" variant="outline" size="sm" onClick={onRemoveImage}>
                 <X />
@@ -312,11 +310,9 @@ export function EntryEditor({
                 <ImagePlus />
                 {isUploading ? 'Attaching…' : 'Add Picture'}
               </Button>
-              <p className="text-xs text-muted-foreground">
-                {entry
-                  ? 'The bot gets a name for it automatically. You can change that under Advanced.'
-                  : 'Save the answer first, then a picture can be attached to it.'}
-              </p>
+              {!entry && (
+                <p className="text-xs text-muted-foreground">Save the answer first.</p>
+              )}
             </div>
           )}
         </section>
@@ -335,7 +331,7 @@ export function EntryEditor({
             <Field
               id={`${ids}-slug`}
               label="Picture Name"
-              hint="The handle the bot uses to ask for the picture. Derived from the question when you attach one."
+              hint="How the bot asks for the picture. Filled in for you."
               error={errors.slug}
             >
               <Input
@@ -356,7 +352,7 @@ export function EntryEditor({
             <Field
               id={`${ids}-order`}
               label="Order"
-              hint="Only breaks a tie between two answers that scored the same. Normally set by moving the answer in the list."
+              hint="Only breaks a tie between equal scores."
               error={errors.sortOrder}
             >
               <Input
