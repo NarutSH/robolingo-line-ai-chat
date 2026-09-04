@@ -1,79 +1,93 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { ImagePlus, Pencil, Plus, Trash2, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { ArrowLeft, Plus, Undo2 } from 'lucide-react'
 import type { FaqEntry } from '@/lib/data/faq-admin'
+import { tagWarnings, type TagNeighbour } from '@/lib/faq/tags'
+import { downscaleImage, ImageUnreadable } from '@/lib/media/downscale'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
-import { cn } from '@/lib/utils'
-import { downscaleImage, ImageUnreadable } from '@/lib/media/downscale'
-
-interface Draft {
-  question: string
-  answer: string
-  tags: string
-  slug: string
-  sortOrder: string
-  isActive: boolean
-}
-
-const EMPTY: Draft = { question: '', answer: '', tags: '', slug: '', sortOrder: '100', isActive: true }
-
-function toDraft(entry: FaqEntry): Draft {
-  return {
-    question: entry.question,
-    answer: entry.answer,
-    tags: entry.tags.join(', '),
-    slug: entry.slug ?? '',
-    sortOrder: String(entry.sortOrder),
-    isActive: entry.isActive,
-  }
-}
+import { AnswerList } from '@/components/console/training/answer-list'
+import { TestBar } from '@/components/console/training/test-bar'
+import {
+  EMPTY_DRAFT,
+  EntryEditor,
+  isDirty,
+  toDraft,
+  type Draft,
+} from '@/components/console/training/entry-editor'
 
 /**
- * Tags are typed as one comma-separated line because that is how someone thinks
- * about them — a handful of words a customer might use — and a repeater with an
- * add button for each would be more interface for less.
+ * How long a deleted answer can be brought back.
+ *
+ * The delete is *held* for this window rather than sent and reversed: bringing
+ * the row back afterwards would mean re-creating it under a new id, with its
+ * picture already swept out of the bucket. Waiting costs nothing and keeps undo
+ * honest — the row is genuinely still there.
  */
-function parseTags(value: string): string[] {
-  return Array.from(new Set(value.split(',').map((tag) => tag.trim()).filter(Boolean)))
+const UNDO_MS = 8000
+
+/**
+ * What went wrong, in the server's words where it gave any. Every route here
+ * answers a failure the same way — `{ error }` and a status — so reading one
+ * belongs in one place rather than at each of the six call sites.
+ */
+function without(drafts: Record<string, Draft>, key: string): Record<string, Draft> {
+  const kept = { ...drafts }
+  delete kept[key]
+  return kept
+}
+
+async function refusal(res: Response, fallback: string): Promise<string> {
+  const json = (await res.json().catch(() => null)) as { error?: string } | null
+  return json?.error ?? `${fallback} (${res.status})`
 }
 
 export function TrainingBoard() {
+  const router = useRouter()
+  const params = useSearchParams()
+
   const [entries, setEntries] = useState<FaqEntry[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [draft, setDraft] = useState<Draft>(EMPTY)
   const [isSaving, setIsSaving] = useState(false)
-  const [uploadingId, setUploadingId] = useState<string | null>(null)
-  const fileRef = useRef<HTMLInputElement>(null)
-  const uploadTargetRef = useRef<string | null>(null)
+  const [isUploading, setIsUploading] = useState(false)
+  const [pendingDelete, setPendingDelete] = useState<FaqEntry | null>(null)
+  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const fetchEntries = useCallback(async (): Promise<FaqEntry[]> => {
+  const selected = params.get('entry')
+  const filter = params.get('q') ?? ''
+  const testQuery = params.get('test') ?? ''
+  /** A question the test box could not answer, carried into a new entry. */
+  const seed = params.get('draft') ?? ''
+
+  const setParam = useCallback(
+    (updates: Record<string, string | null>, { remember = false } = {}) => {
+      const next = new URLSearchParams(params.toString())
+      for (const [key, value] of Object.entries(updates)) {
+        if (value) next.set(key, value)
+        else next.delete(key)
+      }
+      const url = next.size > 0 ? `/console/training?${next}` : '/console/training'
+      // Selecting an answer is a place worth going back to; typing into a
+      // filter is not, and pushing every keystroke would bury the browser's
+      // back button under the operator's own typing.
+      if (remember) router.push(url, { scroll: false })
+      else router.replace(url, { scroll: false })
+    },
+    [params, router]
+  )
+
+  const load = useCallback(async (): Promise<FaqEntry[]> => {
     const res = await fetch('/api/faq', { cache: 'no-store' })
-    if (!res.ok) {
-      const json = (await res.json().catch(() => null)) as { error?: string } | null
-      throw new Error(json?.error ?? `Could not load the answers (${res.status})`)
-    }
+    if (!res.ok) throw new Error(await refusal(res, 'Could not load the answers'))
     return ((await res.json()) as { entries: FaqEntry[] }).entries
   }, [])
 
-  const load = useCallback(async () => {
-    try {
-      setEntries(await fetchEntries())
-      setError(null)
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    }
-  }, [fetchEntries])
-
-  // The fetch is kept out of the effect body and the state set from its
-  // resolution, so nothing here is a synchronous render-triggering write.
   useEffect(() => {
     let cancelled = false
-    fetchEntries()
+    load()
       .then((loaded) => {
         if (!cancelled) setEntries(loaded)
       })
@@ -83,97 +97,205 @@ export function TrainingBoard() {
     return () => {
       cancelled = true
     }
-  }, [fetchEntries])
+  }, [load])
 
-  function startNew() {
-    setEditingId('new')
-    setDraft(EMPTY)
-    setNotice(null)
+  // Everything below is derived from the URL and the loaded rows, so a reload
+  // of either lands on exactly the same screen.
+  const visible = useMemo(() => {
+    const rows = (entries ?? []).filter((entry) => entry.id !== pendingDelete?.id)
+    const needle = filter.trim().toLowerCase()
+    if (!needle) return rows
+    return rows.filter((entry) =>
+      [entry.question, entry.answer, ...entry.tags].some((field) =>
+        field.toLowerCase().includes(needle)
+      )
+    )
+  }, [entries, filter, pendingDelete])
+
+  const entry = useMemo(
+    () => (selected && selected !== 'new' ? (entries?.find((e) => e.id === selected) ?? null) : null),
+    [entries, selected]
+  )
+
+  const neighbours: TagNeighbour[] = useMemo(
+    () =>
+      (entries ?? []).map((e) => ({
+        id: e.id,
+        question: e.question,
+        tags: e.tags,
+        isActive: e.isActive,
+      })),
+    [entries]
+  )
+
+  const takenSlugs = useMemo(
+    () => (entries ?? []).flatMap((e) => (e.slug && e.id !== entry?.id ? [e.slug] : [])),
+    [entries, entry?.id]
+  )
+
+  /**
+   * What the editor is currently showing, and what it was showing when it was
+   * filled. The key changes on exactly the two occasions the form should be
+   * refilled from the server — a different answer was selected, or a save
+   * brought back a newer version of this one — so the refill happens in render
+   * rather than in an effect that would paint the old values first.
+   */
+  const formKey = selected === 'new' ? `new:${seed}` : `${selected}:${entry?.updatedAt ?? ''}`
+  const fromServer = (): Draft => (entry ? toDraft(entry) : { ...EMPTY_DRAFT, question: seed })
+
+  /**
+   * Moving between answers -- by clicking a row, by following a test result, by
+   * pressing the browser's back button -- must not cost the operator what they
+   * have written. A confirmation dialog on every one of those would be the
+   * usual answer and the wrong one: it interrupts the common case to protect
+   * the rare one, and the browser's own back button cannot be talked out of
+   * navigating anyway. So an unsaved draft is kept rather than guarded, and only
+   * Cancel -- the operator saying outright that they are discarding it -- throws
+   * anything away.
+   */
+  const [form, setForm] = useState(() => ({
+    key: formKey,
+    draft: fromServer(),
+    baseline: fromServer(),
+    /**
+     * Answers whose form has been typed into but not saved, kept here beside
+     * the form itself rather than in a ref, because the drafts and the answer
+     * currently shown change in the same breath.
+     */
+    unsaved: {} as Record<string, Draft>,
+  }))
+
+  if (form.key !== formKey) {
+    const baseline = fromServer()
+    const unsaved = isDirty(form.draft, form.baseline)
+      ? { ...form.unsaved, [form.key]: form.draft }
+      : form.unsaved
+    setForm({ key: formKey, draft: unsaved[formKey] ?? baseline, baseline, unsaved })
   }
 
-  function startEdit(entry: FaqEntry) {
-    setEditingId(entry.id)
-    setDraft(toDraft(entry))
-    setNotice(null)
+  const draft = form.draft
+  const setDraft = (next: Draft) => setForm((current) => ({ ...current, draft: next }))
+  const dirty = Boolean(selected) && isDirty(form.draft, form.baseline)
+
+  useEffect(() => {
+    if (!dirty) return
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault()
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [dirty])
+
+  /** Closes the editor, throwing the draft away. The one path that does. */
+  function discard() {
+    if (dirty && !window.confirm('Discard what you have typed?')) return
+    setForm((current) => ({
+      ...current,
+      draft: current.baseline,
+      unsaved: without(current.unsaved, formKey),
+    }))
+    setParam({ entry: null, draft: null }, { remember: true })
   }
 
-  function cancel() {
-    setEditingId(null)
-    setDraft(EMPTY)
+  function select(id: string | null) {
+    setParam({ entry: id, draft: null }, { remember: true })
   }
 
-  async function save() {
-    const creating = editingId === 'new'
-    const sortOrder = Number(draft.sortOrder)
-    if (!Number.isFinite(sortOrder)) {
-      setError('Order has to be a number.')
-      return
-    }
-
+  async function save(next: Draft): Promise<string | null> {
+    const creating = !entry
     setIsSaving(true)
     try {
-      const res = await fetch(creating ? '/api/faq' : `/api/faq/${editingId}`, {
+      const res = await fetch(creating ? '/api/faq' : `/api/faq/${entry.id}`, {
         method: creating ? 'POST' : 'PATCH',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          question: draft.question,
-          answer: draft.answer,
-          tags: parseTags(draft.tags),
-          slug: draft.slug.trim() || null,
-          isActive: draft.isActive,
-          sortOrder,
+          question: next.question,
+          answer: next.answer,
+          tags: next.tags,
+          slug: next.slug.trim() || null,
+          isActive: next.isActive,
+          sortOrder: Number(next.sortOrder),
         }),
       })
 
+      const json = (await res.json().catch(() => null)) as {
+        entry?: FaqEntry
+        error?: string
+      } | null
+
       if (!res.ok) {
-        const json = (await res.json().catch(() => null)) as { error?: string } | null
-        setError(json?.error ?? `Could not save (${res.status})`)
-        return
+        const reason = json?.error ?? `Could not save (${res.status})`
+        setError(reason)
+        return reason
       }
 
       setError(null)
-      setNotice(creating ? 'Answer added. The bot can use it on the next message.' : 'Saved.')
-      cancel()
-      await load()
+      // Saved, so it is no longer something to carry between answers.
+      setForm((current) => ({ ...current, unsaved: without(current.unsaved, formKey) }))
+      setEntries(await load())
+      setNotice(creating ? 'Added. The bot can use it on the next message.' : 'Saved.')
+      // A newly created answer stays open, because attaching a picture to it is
+      // the very next thing anyone does and that needs a saved row. Either way
+      // the form refills itself from what came back: the reload changed the
+      // row's updatedAt, and that is the key it is filled against.
+      if (creating && json?.entry) setParam({ entry: json.entry.id })
+      return null
     } finally {
       setIsSaving(false)
     }
   }
 
-  async function remove(entry: FaqEntry) {
-    if (!window.confirm(`Delete "${entry.question}"? The bot will stop answering this.`)) return
+  /**
+   * Held, not sent. Until the window closes the row is untouched, so undo is a
+   * cancelled timer rather than a re-creation that would come back with a new id
+   * and no picture.
+   */
+  function beginDelete() {
+    if (!entry) return
+    setPendingDelete(entry)
+    setNotice(null)
+    setParam({ entry: null })
 
-    const res = await fetch(`/api/faq/${entry.id}`, { method: 'DELETE' })
-    if (!res.ok) {
-      const json = (await res.json().catch(() => null)) as { error?: string } | null
-      setError(json?.error ?? `Could not delete (${res.status})`)
-      return
-    }
-    setError(null)
-    setNotice('Deleted.')
-    await load()
+    undoTimer.current = setTimeout(async () => {
+      undoTimer.current = null
+      const res = await fetch(`/api/faq/${entry.id}`, { method: 'DELETE' })
+      if (!res.ok) setError(await refusal(res, 'Could not delete'))
+      setPendingDelete(null)
+      setEntries(await load().catch(() => entries ?? []))
+    }, UNDO_MS)
   }
 
-  function chooseImage(entry: FaqEntry) {
-    if (!entry.slug) {
-      setError('Give this answer a name first — it is how the bot asks for the picture.')
-      return
-    }
-    uploadTargetRef.current = entry.id
-    fileRef.current?.click()
+  function undoDelete() {
+    if (undoTimer.current) clearTimeout(undoTimer.current)
+    undoTimer.current = null
+    setPendingDelete(null)
   }
 
-  async function uploadImage(file: File) {
-    const id = uploadTargetRef.current
-    if (!id) return
+  useEffect(
+    () => () => {
+      if (undoTimer.current) clearTimeout(undoTimer.current)
+    },
+    []
+  )
 
-    setUploadingId(id)
+  async function attachImage(file: File) {
+    if (!entry) return
+    setIsUploading(true)
     try {
-      // Shrunk here rather than sent as it came off the camera: the platform
-      // refuses an oversized body before our handler ever runs, and its reply
-      // is a plain-text 413 the operator cannot act on.
+      // The picture's handle has to exist on the row before the upload route
+      // will take it, and the editor may have only just derived one. Only the
+      // name is written: saving the whole draft here would quietly commit every
+      // other unsaved edit in the form, including ones the Save button would
+      // have refused.
+      const named = draft.slug.trim()
+      if (named && named !== (entry.slug ?? '')) {
+        const failed = await save({ ...toDraft(entry), slug: named })
+        if (failed) return
+      }
+
       let prepared: File
       try {
+        // Shrunk here rather than sent as it came off the camera: the platform
+        // refuses an oversized body before our handler runs, with a plain-text
+        // 413 the operator cannot act on.
         prepared = await downscaleImage(file)
       } catch (cause) {
         setError(cause instanceof ImageUnreadable ? cause.message : 'That image could not be read.')
@@ -182,329 +304,220 @@ export function TrainingBoard() {
 
       const form = new FormData()
       form.set('image', prepared)
-      const res = await fetch(`/api/faq/${id}/image`, { method: 'POST', body: form })
+      const res = await fetch(`/api/faq/${entry.id}/image`, { method: 'POST', body: form })
 
       if (!res.ok) {
-        const json = (await res.json().catch(() => null)) as { error?: string } | null
-        setError(json?.error ?? `Could not save the picture (${res.status})`)
+        setError(await refusal(res, 'Could not save the picture'))
         return
       }
       setError(null)
       setNotice('Picture attached. The bot can send it when this answer matches.')
-      await load()
+      setEntries(await load())
     } finally {
-      setUploadingId(null)
-      uploadTargetRef.current = null
-      if (fileRef.current) fileRef.current.value = ''
+      setIsUploading(false)
     }
   }
 
-  async function removeImage(entry: FaqEntry) {
+  async function removeImage() {
+    if (!entry) return
     if (!window.confirm('Remove the picture from this answer?')) return
 
     const res = await fetch(`/api/faq/${entry.id}/image`, { method: 'DELETE' })
     if (!res.ok) {
-      const json = (await res.json().catch(() => null)) as { error?: string } | null
-      setError(json?.error ?? `Could not remove the picture (${res.status})`)
+      setError(await refusal(res, 'Could not remove the picture'))
       return
     }
     setError(null)
     setNotice('Picture removed.')
-    await load()
+    setEntries(await load())
   }
 
-  return (
-    <div className="mx-auto w-full max-w-4xl p-4 md:p-6">
-      <input
-        ref={fileRef}
-        type="file"
-        // Anything the browser can decode: it is re-encoded as a JPEG on the way
-        // out, so a photo straight off a phone arrives in a form LINE accepts.
-        accept="image/*"
-        className="sr-only"
-        onChange={(event) => {
-          const file = event.target.files?.[0]
-          if (file) void uploadImage(file)
-        }}
-      />
+  /**
+   * Moves an answer past its neighbour and writes the whole resulting order in
+   * one request. The list shows the new order at once and is put back exactly as
+   * it was if the write is refused.
+   */
+  async function move(id: string, direction: -1 | 1) {
+    if (!entries) return
+    const moving = visible.find((e) => e.id === id)
+    if (!moving) return
+    // Order is only ever relative within a group: an answer the bot cannot see
+    // is not competing with one it can.
+    const group = visible.filter((e) => e.isActive === moving.isActive)
+    const at = group.findIndex((e) => e.id === id)
+    const neighbour = group[at + direction]
+    if (!neighbour) return
 
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="max-w-prose">
-          <h1 className="text-lg font-semibold">Training</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Everything the bot is allowed to say comes from this list. If an answer is not here,
-            the bot says it does not know and passes the customer to you — so adding one is how
-            you teach it, and no deploy is involved.
-          </p>
-        </div>
-        <Button type="button" size="lg" onClick={startNew} disabled={editingId === 'new'}>
-          <Plus />
-          New answer
-        </Button>
-      </div>
+    const reordered = [...entries]
+    const from = reordered.findIndex((e) => e.id === id)
+    const to = reordered.findIndex((e) => e.id === neighbour.id)
+    const [moved] = reordered.splice(from, 1)
+    reordered.splice(to, 0, moved)
 
-      {error && (
-        <div
-          role="alert"
-          className="mt-4 flex items-start justify-between gap-3 rounded-lg border border-failed/30 bg-failed/10 px-3 py-2 text-sm text-failed-ink"
-        >
-          <p>{error}</p>
-          <Button type="button" variant="ghost" size="xs" onClick={() => setError(null)}>
-            Dismiss
-          </Button>
-        </div>
-      )}
+    const before = entries
+    setEntries(reordered)
 
-      <p aria-live="polite" className="mt-2 text-sm text-muted-foreground">
-        {notice}
-      </p>
+    const res = await fetch('/api/faq/reorder', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids: reordered.map((e) => e.id) }),
+    })
 
-      {editingId === 'new' && (
-        <EntryForm
-          draft={draft}
-          setDraft={setDraft}
-          onSave={save}
-          onCancel={cancel}
-          isSaving={isSaving}
-          heading="New answer"
-        />
-      )}
+    if (!res.ok) {
+      setError(await refusal(res, 'Could not save the order'))
+      setEntries(before)
+      return
+    }
+    setError(null)
+    setEntries(((await res.json()) as { entries: FaqEntry[] }).entries)
+  }
 
-      {entries === null ? (
-        <ul className="mt-4 space-y-3" aria-busy="true" aria-label="Loading answers">
-          {[0, 1, 2].map((row) => (
-            <li
-              key={row}
-              className="h-24 animate-pulse rounded-lg border bg-muted/40 motion-reduce:animate-none"
-            />
-          ))}
-        </ul>
-      ) : entries.length === 0 ? (
-        <p className="mt-6 text-sm text-muted-foreground">
-          Nothing here yet. Add the questions customers ask most — opening hours, where you are,
-          what is on the menu.
-        </p>
-      ) : (
-        <ul className="mt-4 space-y-3">
-          {entries.map((entry) =>
-            editingId === entry.id ? (
-              <li key={entry.id}>
-                <EntryForm
-                  draft={draft}
-                  setDraft={setDraft}
-                  onSave={save}
-                  onCancel={cancel}
-                  isSaving={isSaving}
-                  heading="Editing"
-                />
-              </li>
-            ) : (
-              <li
-                key={entry.id}
-                className={cn('rounded-lg border p-3', !entry.isActive && 'opacity-60')}
-              >
-                <div className="flex gap-3">
-                  {entry.imageUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element -- storage host is per-project
-                    <img
-                      src={entry.imageUrl}
-                      alt={`Picture for ${entry.question}`}
-                      className="size-16 shrink-0 rounded-md object-cover"
-                    />
-                  ) : null}
-
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="font-medium">{entry.question}</p>
-                      {!entry.isActive && (
-                        <span className="rounded border px-1.5 py-px text-[10px] font-medium text-muted-foreground uppercase">
-                          Off
-                        </span>
-                      )}
-                      {entry.slug && (
-                        <span className="rounded border px-1.5 py-px font-mono text-[10px] text-muted-foreground">
-                          {entry.slug}
-                        </span>
-                      )}
-                    </div>
-                    <p className="mt-1 text-sm leading-relaxed whitespace-pre-wrap">{entry.answer}</p>
-                    {entry.tags.length > 0 && (
-                      <p className="mt-1.5 text-xs text-muted-foreground">
-                        Matches on: {entry.tags.join(' · ')}
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="flex shrink-0 flex-col gap-1.5">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => startEdit(entry)}
-                    >
-                      <Pencil />
-                      Edit
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={uploadingId === entry.id}
-                      onClick={() => (entry.imageUrl ? removeImage(entry) : chooseImage(entry))}
-                    >
-                      {entry.imageUrl ? <X /> : <ImagePlus />}
-                      {uploadingId === entry.id
-                        ? 'Saving…'
-                        : entry.imageUrl
-                          ? 'Remove picture'
-                          : 'Add picture'}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="destructive"
-                      size="sm"
-                      onClick={() => remove(entry)}
-                    >
-                      <Trash2 />
-                      Delete
-                    </Button>
-                  </div>
-                </div>
-              </li>
-            )
-          )}
-        </ul>
-      )}
-    </div>
+  const warningsFor = useCallback(
+    (row: FaqEntry) => tagWarnings(row.id, row.tags, neighbours),
+    [neighbours]
   )
-}
 
-function EntryForm({
-  draft,
-  setDraft,
-  onSave,
-  onCancel,
-  isSaving,
-  heading,
-}: {
-  draft: Draft
-  setDraft: (draft: Draft) => void
-  onSave: () => void
-  onCancel: () => void
-  isSaving: boolean
-  heading: string
-}) {
   return (
-    <form
-      className="mt-4 space-y-3 rounded-lg border p-4"
-      onSubmit={(event) => {
-        event.preventDefault()
-        onSave()
-      }}
-    >
-      <h2 className="text-sm font-semibold">{heading}</h2>
-
-      <div className="space-y-1.5">
-        <label htmlFor="faq-question" className="text-sm font-medium">
-          Question
-        </label>
-        <Input
-          id="faq-question"
-          size="lg"
-          value={draft.question}
-          onChange={(event) => setDraft({ ...draft, question: event.target.value })}
-          placeholder="เปิดกี่โมง"
-        />
-      </div>
-
-      <div className="space-y-1.5">
-        <label htmlFor="faq-answer" className="text-sm font-medium">
-          Answer
-        </label>
-        <Textarea
-          id="faq-answer"
-          rows={3}
-          value={draft.answer}
-          onChange={(event) => setDraft({ ...draft, answer: event.target.value })}
-          placeholder="เปิดทุกวัน 07:00–19:00 น. ครับ / Open every day 07:00–19:00."
-        />
-        <p className="text-xs text-muted-foreground">
-          The bot passes this on close to word for word, in the customer&apos;s language. Writing
-          both languages here is the surest way to control what they read.
-        </p>
-      </div>
-
-      <div className="space-y-1.5">
-        <label htmlFor="faq-tags" className="text-sm font-medium">
-          Words that should match it
-        </label>
-        <Input
-          id="faq-tags"
-          size="lg"
-          value={draft.tags}
-          onChange={(event) => setDraft({ ...draft, tags: event.target.value })}
-          placeholder="เปิด, กี่โมง, เวลา, hours, open"
-        />
-        <p className="text-xs text-muted-foreground">
-          Separated by commas. A tag matches when it appears inside what the customer typed, so
-          short and specific beats long: <code>เปิด</code> catches <code>เปิดกี่โมง</code>. Avoid
-          very common words like <code>ไป</code> — they match almost every sentence.
-        </p>
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="space-y-1.5">
-          <label htmlFor="faq-slug" className="text-sm font-medium">
-            Picture name <span className="font-normal text-muted-foreground">(optional)</span>
-          </label>
-          <Input
-            id="faq-slug"
-            size="lg"
-            value={draft.slug}
-            onChange={(event) => setDraft({ ...draft, slug: event.target.value })}
-            placeholder="menu"
-          />
-          <p className="text-xs text-muted-foreground">
-            Needed before you can attach a picture — it is the name the bot asks for. Lowercase
-            letters, numbers and dashes.
+    <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)]">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
+        <div className="min-w-0">
+          <h1 className="text-lg font-semibold">Training</h1>
+          <p className="text-sm text-balance text-muted-foreground">
+            Everything the bot is allowed to say comes from this list. Nothing here needs a deploy.
           </p>
         </div>
+        <Button type="button" size="lg" onClick={() => select('new')}>
+          <Plus />
+          New Answer
+        </Button>
+      </div>
 
-        <div className="space-y-1.5">
-          <label htmlFor="faq-order" className="text-sm font-medium">
-            Order
-          </label>
-          <Input
-            id="faq-order"
-            size="lg"
-            inputMode="numeric"
-            value={draft.sortOrder}
-            onChange={(event) => setDraft({ ...draft, sortOrder: event.target.value })}
+      <div className="grid min-h-0 md:grid-cols-[minmax(260px,340px)_minmax(0,1fr)]">
+        {/* One column at a time on a phone: the editor takes the screen and
+            offers a way back, rather than the two panes squeezing each other. */}
+        <div
+          className={`min-h-0 flex-col overflow-y-auto border-r ${selected ? 'hidden md:flex' : 'flex'}`}
+        >
+          <TestBar
+            query={testQuery}
+            onQueryChange={(next) => setParam({ test: next || null })}
+            onOpenEntry={(id) => select(id)}
+            // The unanswered question travels in the URL, so the answer it
+            // seeds survives a reload like everything else on this page.
+            onDraftFrom={(question) => setParam({ entry: 'new', draft: question }, { remember: true })}
           />
-          <p className="text-xs text-muted-foreground">
-            Breaks ties when two answers match equally well. Lower comes first.
+
+          <div className="border-b p-3">
+            <label htmlFor="faq-filter" className="sr-only">
+              Find an answer
+            </label>
+            <Input
+              id="faq-filter"
+              name="faq-filter"
+              type="search"
+              autoComplete="off"
+              size="lg"
+              value={filter}
+              onChange={(event) => setParam({ q: event.target.value || null })}
+              placeholder="Find by question, answer or word…"
+            />
+          </div>
+
+          {entries === null ? (
+            <ul className="space-y-2 p-3" aria-busy="true" aria-label="Loading answers">
+              {[0, 1, 2, 3].map((row) => (
+                <li
+                  key={row}
+                  className="h-12 animate-pulse rounded-lg bg-muted/50 motion-reduce:animate-none"
+                />
+              ))}
+            </ul>
+          ) : entries.length === 0 ? (
+            <p className="p-4 text-sm text-muted-foreground">
+              Nothing here yet. Add the questions customers ask most: opening hours, where you are,
+              what is on the menu.
+            </p>
+          ) : (
+            <AnswerList
+              entries={visible}
+              total={entries.filter((row) => row.id !== pendingDelete?.id)}
+              activeId={entry?.id ?? null}
+              warningsFor={warningsFor}
+              onSelect={select}
+              onMove={move}
+            />
+          )}
+        </div>
+
+        <div className={`min-h-0 flex-col ${selected ? 'flex' : 'hidden md:flex'}`}>
+          {selected && (
+            <div className="flex items-center gap-2 border-b px-3 py-2 md:hidden">
+              <Button type="button" variant="ghost" size="sm" onClick={() => select(null)}>
+                <ArrowLeft />
+                All Answers
+              </Button>
+            </div>
+          )}
+
+          {error && (
+            <div
+              role="alert"
+              className="flex items-start justify-between gap-3 border-b border-failed/30 bg-failed/10 px-4 py-2 text-sm text-failed-ink"
+            >
+              <p>{error}</p>
+              <Button type="button" variant="ghost" size="xs" onClick={() => setError(null)}>
+                Dismiss
+              </Button>
+            </div>
+          )}
+
+          {pendingDelete && (
+            <div className="flex items-center justify-between gap-3 border-b border-waiting/30 bg-waiting/10 px-4 py-2 text-sm text-waiting-ink">
+              <p>
+                Deleted “{pendingDelete.question}”. The bot will stop answering it.
+              </p>
+              <Button type="button" variant="outline" size="xs" onClick={undoDelete}>
+                <Undo2 />
+                Undo
+              </Button>
+            </div>
+          )}
+
+          {/* Announced and drawn. This is the confirmation that an edit reached
+              the bot, and it was doing neither for a sighted operator. */}
+          <p aria-live="polite" className="px-4 pt-2 text-xs text-muted-foreground empty:hidden">
+            {notice}
           </p>
+
+          {selected ? (
+            <EntryEditor
+              // Remounting on selection keeps a half-open Advanced section or a
+              // stale validation message from following the operator to the next
+              // answer.
+              key={selected}
+              entry={entry}
+              draft={draft}
+              setDraft={setDraft}
+              neighbours={neighbours}
+              takenSlugs={takenSlugs}
+              onSave={save}
+              onCancel={discard}
+              onDelete={beginDelete}
+              onAttachImage={attachImage}
+              onRemoveImage={removeImage}
+              isSaving={isSaving}
+              isUploading={isUploading}
+            />
+          ) : (
+            <div className="hidden place-items-center p-8 text-center md:grid">
+              <p className="max-w-sm text-sm text-balance text-muted-foreground">
+                Pick an answer to edit it, or try a question on the left to see which answer the bot
+                would reach for.
+              </p>
+            </div>
+          )}
         </div>
       </div>
-
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={draft.isActive}
-          onChange={(event) => setDraft({ ...draft, isActive: event.target.checked })}
-          className="size-4 rounded border-input accent-primary"
-        />
-        The bot may use this answer
-      </label>
-
-      <div className="flex gap-2 pt-1">
-        <Button type="submit" size="lg" disabled={isSaving}>
-          {isSaving ? 'Saving…' : 'Save'}
-        </Button>
-        <Button type="button" variant="outline" size="lg" onClick={onCancel} disabled={isSaving}>
-          Cancel
-        </Button>
-      </div>
-    </form>
+    </div>
   )
 }

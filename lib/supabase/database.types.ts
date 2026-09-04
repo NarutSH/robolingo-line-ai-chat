@@ -315,11 +315,13 @@ export type Database = {
           realtime_token: string
         }[]
       }
+      reorder_faq_entries: { Args: { p_ids: string[] }; Returns: number }
       search_faq: {
         Args: { p_limit?: number; p_query: string }
         Returns: {
           answer: string
           has_image: boolean
+          id: string
           question: string
           score: number
           slug: string

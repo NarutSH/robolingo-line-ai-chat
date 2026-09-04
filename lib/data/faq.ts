@@ -2,6 +2,13 @@ import 'server-only'
 import { createAdminClient } from '@/lib/supabase/server'
 
 export interface FaqMatch {
+  /**
+   * Which row answered. The agent has no use for it -- it is handed the words
+   * and the slug -- but the training board runs this same lookup and has to be
+   * able to point at the answer that won, and matching on the question text
+   * would break the moment two answers were worded alike.
+   */
+  id: string
   question: string
   answer: string
   score: number
@@ -32,6 +39,7 @@ export async function searchFaq(query: string, limit = 4): Promise<FaqMatch[]> {
   if (error) throw new Error(`search_faq failed: ${error.message}`)
 
   return (data ?? []).map((row) => ({
+    id: row.id,
     question: row.question,
     answer: row.answer,
     score: row.score,

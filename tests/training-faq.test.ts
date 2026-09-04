@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { GET as listFaq, POST as createFaq } from '@/app/api/faq/route'
 import { DELETE as deleteFaq, PATCH as patchFaq } from '@/app/api/faq/[id]/route'
+import { POST as testFaq } from '@/app/api/faq/test/route'
+import { PATCH as reorderFaq } from '@/app/api/faq/reorder/route'
 import {
   DELETE as removeFaqImage,
   POST as uploadFaqImage,
@@ -185,5 +187,85 @@ describe('training the bot from the console', () => {
 
     expect((await deleteFaq(new Request('https://webchat.test/x'), params(id))).status).toBe(200)
     expect(await searchFaq('zzzgonetag')).toHaveLength(0)
+  })
+})
+
+/**
+ * The board's test box and its reordering. Both are console-only paths that
+ * never reach a customer, and both are exercised here rather than in the
+ * browser because what matters about them is what the database says back.
+ */
+describe('trying an answer out before a customer does', () => {
+  it('will not run for anyone without a session', async () => {
+    expect((await testFaq(json({ query: 'เปิดกี่โมง' }))).status).toBe(401)
+  })
+
+  it('returns the same ranking the agent gets, with the row that produced it', async () => {
+    signIn()
+    const id = await created({ tags: ['zzztrythisone'] })
+
+    const res = await testFaq(json({ query: 'อยากถาม zzztrythisone ครับ' }))
+    expect(res.status).toBe(200)
+
+    const { matches } = (await res.json()) as {
+      matches: Array<{ id: string; question: string; score: number }>
+    }
+    expect(matches[0].id).toBe(id)
+    expect(matches[0].score).toBe('zzztrythisone'.length)
+  })
+
+  it('says plainly when the shop has no answer, which is the handoff case', async () => {
+    signIn()
+    const res = await testFaq(json({ query: 'zzzsomethingnobodyhasevertaughtit' }))
+
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { matches: unknown[] }).matches).toEqual([])
+  })
+
+  it('asks for a question rather than searching for nothing', async () => {
+    signIn()
+    expect((await testFaq(json({ query: '   ' }))).status).toBe(400)
+  })
+
+  it('sends nothing to anybody', async () => {
+    signIn()
+    await created({ tags: ['zzztrythisone'] })
+    // fetch-fake refuses any host it does not fake, so a send would throw here
+    // rather than pass quietly. This is the reassurance that makes the button
+    // safe to press against a live conversation.
+    expect((await testFaq(json({ query: 'zzztrythisone' }))).status).toBe(200)
+  })
+})
+
+describe('putting the answers in order', () => {
+  it('will not reorder for anyone without a session', async () => {
+    expect((await reorderFaq(json({ ids: [] }))).status).toBe(401)
+  })
+
+  it('writes the order it was given, spaced so a number can go between', async () => {
+    signIn()
+    const first = await created({ question: `${MARK} one` })
+    const second = await created({ question: `${MARK} two` })
+
+    const res = await reorderFaq(json({ ids: [second, first] }))
+    expect(res.status).toBe(200)
+
+    const { entries } = (await res.json()) as {
+      entries: Array<{ id: string; sortOrder: number }>
+    }
+    const by = (id: string) => entries.find((e) => e.id === id)!.sortOrder
+    expect(by(second)).toBeLessThan(by(first))
+    expect(by(first) - by(second)).toBeGreaterThanOrEqual(10)
+  })
+
+  it('refuses an order that names the same answer twice', async () => {
+    signIn()
+    const id = await created()
+    expect((await reorderFaq(json({ ids: [id, id] }))).status).toBe(400)
+  })
+
+  it('refuses an empty order rather than renumbering nothing', async () => {
+    signIn()
+    expect((await reorderFaq(json({ ids: [] }))).status).toBe(400)
   })
 })
