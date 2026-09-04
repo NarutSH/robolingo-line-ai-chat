@@ -142,7 +142,7 @@ export async function respondWithAi(params: {
     // a callback, and control-flow analysis would otherwise narrow the variable
     // to null at every point after it.
     const requested: { image: { url: string; question: string } | null } = { image: null }
-    const agent = supportAgent({
+    const agent = await supportAgent({
       conversationId: params.conversationId,
       onHandoff: (reason) => {
         handoffReason = reason
@@ -253,7 +253,8 @@ export async function draftReply(conversationId: string): Promise<RespondResult>
   if (history.length === 0) return { outcome: 'skipped', reason: 'nothing to reply to' }
 
   try {
-    const result = await supportAgent({ conversationId }).invoke(
+    const drafting = await supportAgent({ conversationId })
+    const result = await drafting.invoke(
       { messages: history },
       { recursionLimit: AGENT_RECURSION_LIMIT }
     )

@@ -67,14 +67,32 @@ interface CompletionRequest {
   tools?: Array<{ function?: { name?: string } }>
 }
 
+/**
+ * A message's words, however the client chose to encode them. LangChain sends
+ * content as a plain string in some versions and as an array of typed parts in
+ * others, and a test that asserts on the wrong one fails while the code is
+ * right — which is exactly what happened.
+ */
+function contentText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content
+    .map((part) => (typeof part === 'object' && part && 'text' in part ? String(part.text) : ''))
+    .join('')
+}
+
 /** What the model was actually asked, for checking history, prompts and tools. */
 export function lastModelRequest(): {
   messages: Array<{ role: string; content: unknown }>
   toolNames: string[]
+  /** The system prompt as text, whichever shape it arrived in. */
+  systemPrompt: string
 } {
   const body = calls('openrouter.ai').at(-1)?.body as CompletionRequest | undefined
+  const messages = body?.messages ?? []
   return {
-    messages: body?.messages ?? [],
+    messages,
     toolNames: (body?.tools ?? []).map((t) => t.function?.name ?? '').filter(Boolean),
+    systemPrompt: contentText(messages.find((message) => message.role === 'system')?.content),
   }
 }

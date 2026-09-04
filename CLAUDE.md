@@ -81,6 +81,17 @@ substrings of the customer's question — because Thai has no word boundaries.
 Scoring sums matched tag *length*, not count. `pg_trgm`/`unaccent` are
 deliberately avoided (wrong `search_path` on Supabase Cloud breaks migrations).
 
+**Who the assistant is, is data too** (`lib/ai/persona.ts`, `/console/assistant`).
+The system prompt and a small set of voice settings live in `app_config` and are
+read per run, so renaming the shop or settling on ครับ over ค่ะ is an edit rather
+than a deploy. A key that was never written falls back to `DEFAULT_VOICE`, which
+is the prompt this project ships with — so a shop that never opens the screen
+gets the assistant it had before the screen existed. The prompt is editable in
+full, deliberately: `missingGuardrails()` reports when an edit has dropped the
+grounding rule, the FAQ tool or the handoff, and never blocks the save. The shop
+owns what its assistant says; what it must not do is lose a rule without
+noticing.
+
 **The FAQ is editable from `/console/training`.** Writes live in
 `lib/data/faq-admin.ts`, kept out of `lib/data/faq.ts` so the agent's read path
 stays small. An entry needs a `slug` before a picture can be attached — the slug

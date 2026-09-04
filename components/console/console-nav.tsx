@@ -7,11 +7,13 @@ import { cn } from '@/lib/utils'
 const LINKS = [
   { href: '/console', label: 'Inbox' },
   { href: '/console/training', label: 'Training' },
+  { href: '/console/assistant', label: 'Assistant' },
 ] as const
 
 /**
- * Two places to be. `aria-current` rather than colour alone, so which one you
- * are on survives a screen reader and a monochrome display.
+ * Three places to be: the conversations, what the assistant knows, and who the
+ * assistant is. `aria-current` rather than colour alone, so which one you are on
+ * survives a screen reader and a monochrome display.
  */
 export function ConsoleNav() {
   const pathname = usePathname()
@@ -19,8 +21,12 @@ export function ConsoleNav() {
   return (
     <nav aria-label="Console sections" className="flex items-center gap-1">
       {LINKS.map((link) => {
+        // The inbox owns every path the other sections do not claim, because a
+        // conversation lives at /console/<id> with nothing to match on.
         const active =
-          link.href === '/console' ? !pathname.startsWith('/console/training') : pathname.startsWith(link.href)
+          link.href === '/console'
+            ? !LINKS.some((other) => other.href !== '/console' && pathname.startsWith(other.href))
+            : pathname.startsWith(link.href)
         return (
           <Link
             key={link.href}
