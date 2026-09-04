@@ -9,7 +9,7 @@ import { downscaleImage, ImageUnreadable } from '@/lib/media/downscale'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { AnswerList } from '@/components/console/training/answer-list'
-import { TestBar } from '@/components/console/training/test-bar'
+import { TestButton, TestDialog } from '@/components/console/training/test-dialog'
 import {
   EMPTY_DRAFT,
   EntryEditor,
@@ -58,7 +58,8 @@ export function TrainingBoard() {
 
   const selected = params.get('entry')
   const filter = params.get('q') ?? ''
-  const testQuery = params.get('test') ?? ''
+  /** Present means the dialog is open; its value is what is being asked. */
+  const testQuery = params.get('test')
   /** A question the test box could not answer, carried into a new entry. */
   const seed = params.get('draft') ?? ''
 
@@ -66,8 +67,11 @@ export function TrainingBoard() {
     (updates: Record<string, string | null>, { remember = false } = {}) => {
       const next = new URLSearchParams(params.toString())
       for (const [key, value] of Object.entries(updates)) {
-        if (value) next.set(key, value)
-        else next.delete(key)
+        // Null removes the parameter; an empty string keeps it. The test
+        // dialog needs that difference — `?test=` with nothing after it is an
+        // open dialog with nothing typed into it yet.
+        if (value === null) next.delete(key)
+        else next.set(key, value)
       }
       const url = next.size > 0 ? `/console/training?${next}` : '/console/training'
       // Selecting an answer is a place worth going back to; typing into a
@@ -379,6 +383,20 @@ export function TrainingBoard() {
 
   return (
     <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)]">
+      <TestDialog
+        open={testQuery !== null}
+        onOpenChange={(next) => setParam({ test: next ? (testQuery ?? '') : null })}
+        query={testQuery ?? ''}
+        onQueryChange={(next) => setParam({ test: next })}
+        onOpenEntry={(id) => {
+          setParam({ entry: id, test: null }, { remember: true })
+        }}
+        // The unanswered question travels in the URL, so the answer it seeds
+        // survives a reload like everything else on this page.
+        onDraftFrom={(question) =>
+          setParam({ entry: 'new', draft: question, test: null }, { remember: true })
+        }
+      />
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
         <div className="min-w-0">
           <h1 className="text-lg font-semibold">Training</h1>
@@ -386,10 +404,13 @@ export function TrainingBoard() {
             Everything the bot can say comes from this list.
           </p>
         </div>
-        <Button type="button" size="lg" onClick={() => select('new')}>
-          <Plus />
-          New Answer
-        </Button>
+        <div className="flex items-center gap-2">
+          <TestButton onOpen={() => setParam({ test: testQuery ?? '' })} />
+          <Button type="button" size="lg" onClick={() => select('new')}>
+            <Plus />
+            New Answer
+          </Button>
+        </div>
       </div>
 
       <div className="grid min-h-0 md:grid-cols-[minmax(260px,340px)_minmax(0,1fr)]">
@@ -398,15 +419,6 @@ export function TrainingBoard() {
         <div
           className={`min-h-0 flex-col overflow-y-auto border-r ${selected ? 'hidden md:flex' : 'flex'}`}
         >
-          <TestBar
-            query={testQuery}
-            onQueryChange={(next) => setParam({ test: next || null })}
-            onOpenEntry={(id) => select(id)}
-            // The unanswered question travels in the URL, so the answer it
-            // seeds survives a reload like everything else on this page.
-            onDraftFrom={(question) => setParam({ entry: 'new', draft: question }, { remember: true })}
-          />
-
           <div className="border-b p-3">
             <label htmlFor="faq-filter" className="sr-only">
               Find an answer
