@@ -96,6 +96,9 @@ what the model and the conversation-list preview read. Files sit in the public
 **Every row goes through the secret key.** RLS is on with zero policies; the
 browser holds only the publishable key and uses it for Realtime broadcast
 alone. `createAdminClient()` is created per call, never memoized.
+`tests/row-level-security.test.ts` holds that shut: it asks with the browser's
+own key and expects nothing back, from every table, the `search_faq` grant and
+the media bucket alike. A new table belongs in its list.
 
 **Two independent cookies, one secret** (`lib/auth/`): an operator session
 (shared password, HMAC) and a web-visitor session id, signed over different
