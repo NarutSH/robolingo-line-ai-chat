@@ -145,17 +145,3 @@ Because one cloud project is shared, `fileParallelism` is off and isolation is
 by convention: test contacts use a reserved prefix, visitor conversations are
 swept by issued session ids, and the sweep runs before the suite as well as
 after. A crashed run must not leave rows in the inbox a reviewer opens.
-
-## Agent skills
-
-### Issue tracker
-
-Local markdown under `.scratch/` — one directory per feature. See `docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-The five canonical roles, unchanged (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`, which covers what to do when they are absent (they are, today).
