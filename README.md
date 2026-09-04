@@ -145,6 +145,39 @@ At a couple of dozen entries this is not a compromise — it is the right amount
 of machinery. Embeddings become worth their weight when the corpus is too large
 for a person to skim.
 
+## Pictures
+
+Three things send one: an operator attaching a photo, the agent showing what the
+shop has published, and a customer sending one in.
+
+**The URL never goes in `content`.** That column is fed straight to the model by
+the history builder and straight to the conversation list as the preview, so a
+URL in there would read to the agent as something the customer said and to the
+operator as the text of the last message. `content` keeps holding words a person
+would read — `[image]` — and the file gets a column of its own.
+
+**The bucket is public, and that is a decision rather than a shortcut.** LINE
+fetches `originalContentUrl` from its own servers holding none of our
+credentials, so a signed URL would turn a delivered message into a broken image
+the moment it expired. Reads are open to anyone with the URL; every write goes
+through the secret key on the server and no storage policy is added. Same shape
+as the tables: unreachable except through us.
+
+**The agent picks whether, never which.** An FAQ entry can carry a picture, and
+`search_faq` says so when it does. `show_image` takes only the name the lookup
+just handed back and reads the URL from the row — so the rule that stops the
+agent inventing an opening time stops it inventing a picture, by construction.
+It is told not to describe what is in the image, because it has not seen it. The
+picture goes out *after* the sentence introducing it, as a push: the written
+reply has just spent the single-use reply token.
+
+**A customer's picture is copied rather than linked.** LINE releases message
+content only to the channel token and only for a while, so a URL pointing at
+LINE would be both unauthorised for the operator's browser and, before long,
+dead. The bytes are fetched in their own `after()` — a picture LINE will not
+hand over must not cost the customer their answer — and a failed copy leaves the
+message reading `[image]`, exactly as it did before any of this existed.
+
 ## Data
 
 Five tables plus the FAQ. `conversations` is the spine: it carries the channel

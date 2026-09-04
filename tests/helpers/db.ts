@@ -1,5 +1,15 @@
 import { createAdminClient } from '@/lib/supabase/server'
+import { removeConversationMedia } from '@/lib/media/store'
 import { newTestUserId, TEST_EVENT_PREFIX, TEST_USER_PREFIX } from './line'
+
+/**
+ * Pictures live in a bucket, and a bucket does not cascade. So the files have to
+ * be found before the rows that name them are gone — after the delete there is
+ * nothing left to say which conversations were ours.
+ */
+async function sweepMediaFor(conversationIds: string[]): Promise<void> {
+  await Promise.all(conversationIds.map((id) => removeConversationMedia(id)))
+}
 
 /**
  * Tests share the one cloud project with the demo data, so isolation is by
@@ -9,6 +19,13 @@ import { newTestUserId, TEST_EVENT_PREFIX, TEST_USER_PREFIX } from './line'
  */
 export async function sweepTestData(): Promise<void> {
   const supabase = createAdminClient()
+
+  const { data: doomed } = await supabase
+    .from('conversations')
+    .select('id, line_users!inner(line_user_id)')
+    .like('line_users.line_user_id', `${TEST_USER_PREFIX}%`)
+  await sweepMediaFor((doomed ?? []).map((row) => row.id))
+
   await supabase.from('line_users').delete().like('line_user_id', `${TEST_USER_PREFIX}%`)
   await supabase.from('line_webhook_events').delete().like('webhook_event_id', `${TEST_EVENT_PREFIX}%`)
 }
@@ -20,6 +37,13 @@ export async function sweepTestData(): Promise<void> {
 export async function sweepVisitorConversations(sessionIds: string[]): Promise<void> {
   if (sessionIds.length === 0) return
   const supabase = createAdminClient()
+
+  const { data: doomed } = await supabase
+    .from('conversations')
+    .select('id')
+    .in('web_session_id', sessionIds)
+  await sweepMediaFor((doomed ?? []).map((row) => row.id))
+
   await supabase.from('conversations').delete().in('web_session_id', sessionIds)
 }
 

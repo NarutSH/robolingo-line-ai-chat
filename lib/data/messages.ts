@@ -6,7 +6,7 @@ export async function listMessages(conversationId: string, limit = 100): Promise
   const supabase = createAdminClient()
   const { data, error } = await supabase
     .from('messages')
-    .select('id, conversation_id, sender, content, content_type, created_at, delivery_status, delivery_error')
+    .select('id, conversation_id, sender, content, content_type, created_at, delivery_status, delivery_error, media_url')
     .eq('conversation_id', conversationId)
     .order('created_at', { ascending: false })
     .limit(limit)
@@ -23,6 +23,7 @@ export async function listMessages(conversationId: string, limit = 100): Promise
       createdAt: row.created_at,
       deliveryStatus: (row.delivery_status ?? 'sent') as ChatMessage['deliveryStatus'],
       failureReason: row.delivery_error,
+      mediaUrl: row.media_url,
     }))
     .reverse()
 }
@@ -31,7 +32,10 @@ export async function listMessages(conversationId: string, limit = 100): Promise
 export async function createOutboundMessage(params: {
   conversationId: string
   sender: 'operator' | 'ai' | 'system'
+  /** Words a person would read. For a picture, a caption or '[image]' — never the URL. */
   content: string
+  contentType?: 'text' | 'image'
+  mediaUrl?: string | null
 }): Promise<string> {
   const supabase = createAdminClient()
   const { data, error } = await supabase
@@ -40,8 +44,9 @@ export async function createOutboundMessage(params: {
       conversation_id: params.conversationId,
       direction: 'outbound',
       sender: params.sender,
-      content_type: 'text',
+      content_type: params.contentType ?? 'text',
       content: params.content,
+      media_url: params.mediaUrl ?? null,
       delivery_status: 'queued',
     })
     .select('id')

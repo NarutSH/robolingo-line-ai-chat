@@ -97,10 +97,17 @@ export async function respondWithAi(params: {
     }
 
     let handoffReason: string | null = null
+    // Held on an object rather than in a bare `let`: the assignment happens in
+    // a callback, and control-flow analysis would otherwise narrow the variable
+    // to null at every point after it.
+    const requested: { image: { url: string; question: string } | null } = { image: null }
     const agent = supportAgent({
       conversationId: params.conversationId,
       onHandoff: (reason) => {
         handoffReason = reason
+      },
+      onShowImage: (image) => {
+        requested.image = image
       },
     })
 
@@ -147,6 +154,28 @@ export async function respondWithAi(params: {
       replyToken: params.replyToken,
       replyTokenIssuedAt: params.replyTokenIssuedAt,
     })
+
+    // After the sentence that introduces it, never before: a picture arriving
+    // first reads as a non sequitur. No reply token is passed, because the one
+    // above has just consumed it — this goes out as a push, which is correct
+    // and is what dispatchOutbound would fall back to anyway.
+    //
+    // A picture that fails to send must not take the written answer down with
+    // it. The answer is already delivered; the customer keeps it, the failed
+    // row stays visible in the console, and an operator can resend.
+    const image = requested.image
+    if (image) {
+      try {
+        await dispatchOutbound({
+          conversation,
+          sender: 'ai',
+          text: `[image] ${image.question}`,
+          imageUrl: image.url,
+        })
+      } catch (cause) {
+        console.error('[ai] the reply went out but its picture did not', cause)
+      }
+    }
 
     await releaseAiRun(params.conversationId, runId, 'idle')
     return { outcome: handedOff ? 'handed-off' : 'sent', text }

@@ -20,6 +20,16 @@ import type { ChatMessage } from '@/lib/types'
  */
 export type BubbleTone = 'other' | 'self' | 'ai' | 'note'
 
+/**
+ * A picture needs alternative text and there is no caption to borrow, so the
+ * stored placeholder is reused: '[image]' on its own, or '[image] <what it is>'
+ * for one the shop published against an answer.
+ */
+function describePicture(content: string): string {
+  const described = content.replace(/^\[image\]\s*/, '').trim()
+  return described ? `Picture: ${described}` : 'Picture'
+}
+
 const toneClass: Record<BubbleTone, string> = {
   other: 'bg-muted text-foreground',
   self: 'bg-primary text-primary-foreground',
@@ -59,6 +69,10 @@ export function MessageBubble({
   const isEnd = align === 'end'
   const failed = message.deliveryStatus === 'failed'
   const queued = message.deliveryStatus === 'queued'
+  // A picture the copy has actually landed for. An inbound image whose bytes we
+  // could not fetch keeps its '[image]' placeholder rather than rendering a
+  // broken frame, which is what the null case means here.
+  const picture = message.contentType === 'image' ? message.mediaUrl : null
 
   return (
     <div className={cn('flex', isEnd ? 'justify-end' : 'justify-start')}>
@@ -70,18 +84,38 @@ export function MessageBubble({
           <span className="px-1 text-[11px] font-medium text-muted-foreground">{label}</span>
         )}
 
-        <div
-          className={cn(
-            // leading-relaxed rather than the default: Thai stacks tone marks
-            // above and vowels below, and a tight line clips them.
-            'w-fit rounded-2xl px-3.5 py-2 text-sm leading-relaxed break-words whitespace-pre-wrap',
-            toneClass[tone],
-            queued && 'opacity-70',
-            failed && 'ring-1 ring-failed'
-          )}
-        >
-          {message.content}
-        </div>
+        {picture ? (
+          <div
+            className={cn(
+              'w-fit overflow-hidden rounded-2xl',
+              queued && 'opacity-70',
+              failed && 'ring-1 ring-failed'
+            )}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element -- storage host is per-project */}
+            <img
+              src={picture}
+              alt={describePicture(message.content)}
+              // Bounded rather than fluid: a portrait photo at full width would
+              // push the rest of the thread off the screen.
+              className="max-h-80 w-auto max-w-full object-cover"
+              loading="lazy"
+            />
+          </div>
+        ) : (
+          <div
+            className={cn(
+              // leading-relaxed rather than the default: Thai stacks tone marks
+              // above and vowels below, and a tight line clips them.
+              'w-fit rounded-2xl px-3.5 py-2 text-sm leading-relaxed break-words whitespace-pre-wrap',
+              toneClass[tone],
+              queued && 'opacity-70',
+              failed && 'ring-1 ring-failed'
+            )}
+          >
+            {message.content}
+          </div>
+        )}
 
         {status && (
           <span

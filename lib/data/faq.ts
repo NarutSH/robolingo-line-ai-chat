@@ -5,6 +5,9 @@ export interface FaqMatch {
   question: string
   answer: string
   score: number
+  /** A stable handle for entries the shop has published a picture against. */
+  slug: string | null
+  hasImage: boolean
 }
 
 /**
@@ -27,5 +30,33 @@ export async function searchFaq(query: string, limit = 4): Promise<FaqMatch[]> {
   const { data, error } = await supabase.rpc('search_faq', { p_query: trimmed, p_limit: limit })
 
   if (error) throw new Error(`search_faq failed: ${error.message}`)
-  return data ?? []
+
+  return (data ?? []).map((row) => ({
+    question: row.question,
+    answer: row.answer,
+    score: row.score,
+    slug: row.slug,
+    hasImage: row.has_image,
+  }))
+}
+
+/**
+ * The picture the shop published against one entry, or null.
+ *
+ * Looked up by slug rather than handed out by search_faq so the agent has to
+ * name something it was just shown. Same rule as every other fact about the
+ * shop: it can only pass on what the lookup returned.
+ */
+export async function faqImage(slug: string): Promise<{ url: string; question: string } | null> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('faq_entries')
+    .select('question, image_url')
+    .eq('slug', slug)
+    .eq('is_active', true)
+    .maybeSingle()
+
+  if (error) throw new Error(`faq image lookup failed: ${error.message}`)
+  if (!data?.image_url) return null
+  return { url: data.image_url, question: data.question }
 }

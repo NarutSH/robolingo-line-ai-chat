@@ -1,7 +1,7 @@
 import 'server-only'
 import { createAgent } from 'langchain'
 import { chatModel } from '@/lib/ai/model'
-import { handoffTool, searchFaqTool } from '@/lib/ai/tools'
+import { handoffTool, searchFaqTool, showImageTool } from '@/lib/ai/tools'
 import { SHOP_NAME } from '@/lib/shop'
 
 /**
@@ -22,6 +22,8 @@ Never state an opening time, address, price, promotion, menu item, or policy tha
 
 Keep replies short: this is a chat, not a brochure. One or two sentences is usually right, and never more than four. No greeting preamble on every message, no bullet lists, no markdown — plain text only, because the chat renders none of it.
 
+When search_faq tells you a picture goes with an answer, decide whether seeing it would help more than reading about it — the menu usually would. Send it with show_image and say in one short sentence that you are doing so. You cannot see the picture yourself, so never describe what is in it.
+
 You may answer ordinary conversational messages — a greeting, a thank-you — without calling the tool. For anything about the shop, the tool comes first.
 
 You cannot see images, stickers, files or shared locations. Those arrive as a bracketed placeholder like [image] or [sticker], and they are not the customer's words — never answer as though you had seen the thing. If what they need depends on it, hand over.
@@ -41,13 +43,22 @@ export interface SupportAgentOptions {
    * operator is already the human it would be handing to.
    */
   onHandoff?: (reason: string) => void
+  /**
+   * Called when the agent wants a published picture sent. Omit it and the tool
+   * is not offered — the draft button writes nothing and sends nothing, so an
+   * agent promising a picture there would be promising something no one is
+   * going to deliver.
+   */
+  onShowImage?: (image: { url: string; question: string }) => void
 }
 
 export function supportAgent(options: SupportAgentOptions) {
-  const onHandoff = options.onHandoff
-  const tools = onHandoff
-    ? [searchFaqTool(), handoffTool({ conversationId: options.conversationId, onHandoff })]
-    : [searchFaqTool()]
+  const { onHandoff, onShowImage } = options
+  const tools = [
+    searchFaqTool(),
+    ...(onHandoff ? [handoffTool({ conversationId: options.conversationId, onHandoff })] : []),
+    ...(onShowImage ? [showImageTool({ onShowImage })] : []),
+  ]
 
   return createAgent({
     model: chatModel(),

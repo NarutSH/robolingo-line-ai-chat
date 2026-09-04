@@ -42,12 +42,19 @@ export class OutboundFailed extends Error {
 export async function dispatchOutbound(params: {
   conversation: ConversationTarget
   sender: OutboundSender
+  /** Words a person would read. For a picture, a caption or '[image]'. */
   text: string
+  /**
+   * Sends this message as a picture. The row still records `text` so the
+   * conversation list, the model's view of the thread, and anyone reading with
+   * a screen reader all get words rather than a URL.
+   */
+  imageUrl?: string | null
   /** Present only for a reply generated in the seconds after an inbound webhook. */
   replyToken?: string | null
   replyTokenIssuedAt?: Date | string | null
 }): Promise<DispatchResult> {
-  const { conversation, sender, text } = params
+  const { conversation, sender, text, imageUrl } = params
 
   if (conversation.channel === 'line' && !conversation.lineUserId) {
     throw new Error('This conversation has no LINE recipient.')
@@ -57,6 +64,8 @@ export async function dispatchOutbound(params: {
     conversationId: conversation.id,
     sender,
     content: text,
+    contentType: imageUrl ? 'image' : 'text',
+    mediaUrl: imageUrl,
   })
 
   try {
@@ -69,6 +78,7 @@ export async function dispatchOutbound(params: {
     const result = await sendToLine({
       to: conversation.lineUserId!,
       text,
+      imageUrl,
       replyToken: params.replyToken,
       replyTokenIssuedAt: params.replyTokenIssuedAt,
       // The row id doubles as X-Line-Retry-Key, so a retried request cannot

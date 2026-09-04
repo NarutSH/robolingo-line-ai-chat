@@ -3,6 +3,12 @@ import { getConversationTarget, markConversationRead } from '@/lib/data/conversa
 import { listMessages } from '@/lib/data/messages'
 import { dispatchOutbound, OutboundFailed } from '@/lib/messaging/dispatch'
 import { featureReady } from '@/lib/env'
+import {
+  isAcceptedImageType,
+  MAX_IMAGE_BYTES,
+  storeImage,
+  type AcceptedImageType,
+} from '@/lib/media/store'
 
 export const maxDuration = 30
 
@@ -47,9 +53,40 @@ export async function POST(request: Request, ctx: RouteContext<'/api/conversatio
   }
 
   const { id } = await ctx.params
-  const body = (await request.json().catch(() => null)) as { text?: string } | null
-  const text = body?.text?.trim()
-  if (!text) return Response.json({ error: 'Message text is required.' }, { status: 400 })
+
+  // One endpoint, because "send this to the conversation" is one thing whether
+  // it carries words or a picture. The content type of the *request* is what
+  // says which, so a client that knows nothing about pictures is unaffected.
+  const isUpload = request.headers.get('content-type')?.includes('multipart/form-data')
+
+  let text: string | undefined
+  let upload: { file: File; contentType: AcceptedImageType } | null = null
+
+  if (isUpload) {
+    const form = await request.formData().catch(() => null)
+    const file = form?.get('image')
+    if (!(file instanceof File)) {
+      return Response.json({ error: 'No image was attached.' }, { status: 400 })
+    }
+    if (!isAcceptedImageType(file.type)) {
+      return Response.json(
+        { error: 'LINE accepts JPEG and PNG images only.' },
+        { status: 415 }
+      )
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      return Response.json(
+        { error: `That image is larger than ${Math.round(MAX_IMAGE_BYTES / 1024 / 1024)} MB.` },
+        { status: 413 }
+      )
+    }
+    upload = { file, contentType: file.type }
+    text = '[image]'
+  } else {
+    const body = (await request.json().catch(() => null)) as { text?: string } | null
+    text = body?.text?.trim()
+    if (!text) return Response.json({ error: 'Message text is required.' }, { status: 400 })
+  }
 
   const conversation = await getConversationTarget(id)
   if (!conversation) return Response.json({ error: 'Conversation not found.' }, { status: 404 })
@@ -58,10 +95,24 @@ export async function POST(request: Request, ctx: RouteContext<'/api/conversatio
   }
 
   try {
+    // Stored before the row is written, because a picture that never reached the
+    // bucket has no URL for the row to point at. A file uploaded for a send that
+    // then fails is a few kilobytes of litter; a message row promising a picture
+    // that does not exist is a broken image in the customer's chat.
+    let imageUrl: string | null = null
+    if (upload) {
+      const stored = await storeImage({
+        conversationId: conversation.id,
+        bytes: await upload.file.arrayBuffer(),
+        contentType: upload.contentType,
+      })
+      imageUrl = stored.url
+    }
+
     // No reply token: the operator is answering minutes after the inbound
     // webhook, so any token LINE issued is long dead. dispatchOutbound records
     // the row before sending, so a rejection stays visible in the thread.
-    const result = await dispatchOutbound({ conversation, sender: 'operator', text })
+    const result = await dispatchOutbound({ conversation, sender: 'operator', text, imageUrl })
     return Response.json({ id: result.messageId, via: result.via })
   } catch (cause) {
     if (cause instanceof OutboundFailed) {

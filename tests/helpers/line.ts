@@ -24,6 +24,8 @@ export interface WebhookOptions {
   messageId?: string
   replyToken?: string
   isRedelivery?: boolean
+  /** Sends a picture instead of words, the way a customer's photo arrives. */
+  image?: boolean
   /** Replaces the whole events array, for follow/unfollow or an empty verify ping. */
   events?: unknown[]
 }
@@ -41,12 +43,18 @@ function webhookBody(options: WebhookOptions): string {
           deliveryContext: { isRedelivery: options.isRedelivery ?? false },
           source: { type: 'user', userId: options.userId ?? newTestUserId() },
           replyToken: options.replyToken ?? hex(32),
-          message: {
-            type: 'text',
-            id: options.messageId ?? String(Date.now()),
-            text: options.text ?? 'สวัสดีครับ',
-            quoteToken: 'q',
-          },
+          message: options.image
+            ? {
+                type: 'image',
+                id: options.messageId ?? String(Date.now()),
+                contentProvider: { type: 'line' },
+              }
+            : {
+                type: 'text',
+                id: options.messageId ?? String(Date.now()),
+                text: options.text ?? 'สวัสดีครับ',
+                quoteToken: 'q',
+              },
         },
       ],
   })
@@ -97,6 +105,29 @@ export function lineOk(): Handler {
   }
 }
 
+const ONE_PIXEL_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64'
+)
+
+/**
+ * Message content, which LINE serves from a different host to the rest of the
+ * API. Registered separately for that reason — `api-data.line.me` does not
+ * match the fragment the send and profile fake is keyed on.
+ */
+export function lineContentOk(): Handler {
+  return () =>
+    new Response(new Uint8Array(ONE_PIXEL_PNG), {
+      status: 200,
+      headers: { 'content-type': 'image/png' },
+    })
+}
+
+/** LINE refusing to hand over the content, so the give-up path can be asserted. */
+export function lineContentGone(): Handler {
+  return () => new Response('gone', { status: 410 })
+}
+
 /** LINE refusing the send, so the failure path can be asserted. */
 export function lineRejects(status = 500, message = 'Internal server error'): Handler {
   return (request) => {
@@ -110,6 +141,8 @@ export interface SentMessage {
   to?: string
   replyToken?: string
   text: string
+  /** Set when the message went out as a picture rather than words. */
+  imageUrl?: string
   retryKey?: string
 }
 
@@ -121,13 +154,15 @@ export function sentToLine(): SentMessage[] {
       const body = (c.body ?? {}) as {
         to?: string
         replyToken?: string
-        messages?: Array<{ text?: string }>
+        messages?: Array<{ text?: string; type?: string; originalContentUrl?: string }>
       }
+      const first = body.messages?.[0]
       return {
         via: c.url.pathname.endsWith('/message/reply') ? ('reply' as const) : ('push' as const),
         to: body.to,
         replyToken: body.replyToken,
-        text: body.messages?.[0]?.text ?? '',
+        text: first?.text ?? '',
+        imageUrl: first?.type === 'image' ? first.originalContentUrl : undefined,
         retryKey: c.headers.get('x-line-retry-key') ?? undefined,
       }
     })

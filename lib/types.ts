@@ -16,4 +16,9 @@ export interface ChatMessage {
    * can tell a transient failure from one that retrying will not fix.
    */
   failureReason?: string | null
+  /**
+   * The picture this message carries, when it carries one. `contentType` says
+   * whether to expect it; `content` stays readable words either way.
+   */
+  mediaUrl?: string | null
 }

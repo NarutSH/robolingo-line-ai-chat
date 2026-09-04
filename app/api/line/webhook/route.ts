@@ -3,6 +3,7 @@ import type { webhook } from '@line/bot-sdk'
 import { verifyLineSignature } from '@/lib/line/verify'
 import { ingestLineMessage } from '@/lib/line/ingest'
 import { refreshProfile } from '@/lib/line/profile'
+import { captureInboundImage } from '@/lib/line/media'
 import { createAdminClient } from '@/lib/supabase/server'
 import { respondWithAi } from '@/lib/ai/respond'
 
@@ -110,6 +111,21 @@ export async function POST(request: Request) {
     }
 
     const conversationId = result.conversationId
+
+    // A picture the customer sent. Copied in its own after() for the same
+    // reason the profile lookup gets one: an image LINE will not hand over must
+    // not cost the customer their answer.
+    if (
+      conversationId &&
+      described.contentType === 'image' &&
+      result.messageId &&
+      messageEvent.message.id
+    ) {
+      const messageRowId = result.messageId
+      const lineMessageId = messageEvent.message.id
+      after(() => captureInboundImage({ messageRowId, conversationId, lineMessageId }))
+    }
+
     if (conversationId) {
       after(async () => {
         // respondWithAi decides whether it is its place to answer at all — it is a

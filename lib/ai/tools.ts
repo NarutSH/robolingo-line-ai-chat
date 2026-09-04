@@ -1,7 +1,7 @@
 import 'server-only'
 import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
-import { searchFaq } from '@/lib/data/faq'
+import { faqImage, searchFaq } from '@/lib/data/faq'
 import { handOffToHuman } from '@/lib/data/conversations'
 import { recordSystemNote } from '@/lib/data/messages'
 
@@ -18,7 +18,15 @@ export function searchFaqTool() {
       if (matches.length === 0) {
         return 'No FAQ entry covers this. The shop has not published an answer to it.'
       }
-      return matches.map((m) => `Q: ${m.question}\nA: ${m.answer}`).join('\n\n')
+      return matches
+        .map((m) => {
+          const picture =
+            m.hasImage && m.slug
+              ? `\nA picture goes with this answer. To send it, call show_image with image="${m.slug}".`
+              : ''
+          return `Q: ${m.question}\nA: ${m.answer}${picture}`
+        })
+        .join('\n\n')
     },
     {
       name: 'search_faq',
@@ -30,6 +38,55 @@ export function searchFaqTool() {
         'published no answer, which means you do not know.',
       schema: z.object({
         question: z.string().describe("The customer's question, in their own words"),
+      }),
+    }
+  )
+}
+
+/**
+ * Sending the customer a picture the shop has published.
+ *
+ * The agent chooses *whether* a picture helps; it cannot choose *which*. The
+ * only argument is a slug search_faq just handed it, and the URL is read from
+ * the row rather than passed in — so the same rule that stops the agent
+ * inventing an opening time stops it inventing a picture, by construction.
+ *
+ * Nothing is sent from inside the tool. The caller sends it after the written
+ * reply, because a picture arriving before the sentence that introduces it
+ * reads as a non sequitur.
+ */
+export function showImageTool(options: {
+  onShowImage: (image: { url: string; question: string }) => void
+}) {
+  return tool(
+    async ({ image }) => {
+      const found = await faqImage(image)
+      if (!found) {
+        return (
+          `The shop has published no picture called "${image}". ` +
+          'Answer in words instead, and do not tell the customer a picture is coming.'
+        )
+      }
+
+      options.onShowImage(found)
+
+      return (
+        'The picture will be sent straight after your reply. Say in one short ' +
+        'sentence that you are sending it. You have not seen it, so do not ' +
+        'describe what is in it and do not repeat its contents as fact.'
+      )
+    },
+    {
+      name: 'show_image',
+      description:
+        'Send the customer a picture the shop has published for an FAQ answer — ' +
+        'the menu, for instance. Only call this with an image name that search_faq ' +
+        'has just told you exists. Use it when seeing the thing would answer the ' +
+        'question better than describing it.',
+      schema: z.object({
+        image: z
+          .string()
+          .describe('The image name search_faq gave you, exactly as written, e.g. "menu"'),
       }),
     }
   )

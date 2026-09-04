@@ -7,6 +7,7 @@ import { useStickToBottom } from '@/hooks/use-stick-to-bottom'
 import { MessageBubble, type BubbleTone } from '@/components/chat/message-bubble'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { ImagePlus } from 'lucide-react'
 import { ModeIndicator } from '@/components/console/mode-indicator'
 
 /**
@@ -43,8 +44,10 @@ export function MessageThread({
   const [isDrafting, setIsDrafting] = useState(false)
   const [isSwitching, setIsSwitching] = useState(false)
   const [retryingId, setRetryingId] = useState<string | null>(null)
+  const [isUploading, setIsUploading] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   // Renders the operator's message the instant they hit send, then reconciles
   // with whatever the next poll returns.
@@ -161,6 +164,35 @@ export function MessageThread({
     }
     setError(null)
     return true
+  }
+
+  /**
+   * Sends a picture to the same endpoint the words go to — the request's own
+   * content type is what distinguishes them. The file input is reset either way
+   * so choosing the same picture twice in a row still fires a change event.
+   */
+  async function sendImage(file: File) {
+    setIsUploading(true)
+    try {
+      const form = new FormData()
+      form.set('image', file)
+
+      const res = await fetch(`/api/conversations/${conversationId}/messages`, {
+        method: 'POST',
+        body: form,
+      })
+
+      if (!res.ok) {
+        const json = (await res.json().catch(() => null)) as { error?: string } | null
+        setError(json?.error ?? `Could not send the image (${res.status})`)
+      } else {
+        setError(null)
+      }
+      await refresh()
+    } finally {
+      setIsUploading(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
   }
 
   async function refresh() {
@@ -295,6 +327,26 @@ export function MessageThread({
       )}
 
       <form action={handleSubmit} className="flex gap-2 border-t p-3">
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/jpeg,image/png"
+          className="sr-only"
+          onChange={(event) => {
+            const file = event.target.files?.[0]
+            if (file) void sendImage(file)
+          }}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="icon-lg"
+          aria-label="Send a picture"
+          disabled={isUploading}
+          onClick={() => fileRef.current?.click()}
+        >
+          <ImagePlus />
+        </Button>
         <Button
           type="button"
           variant="outline"
@@ -325,8 +377,9 @@ export function MessageThread({
           everywhere else — and it is the reassurance that makes the button
           safe to press. */}
       <p className="px-3 pb-3 text-xs text-muted-foreground">
-        A draft is written by the AI and goes in the box. Nothing reaches the
-        customer until you press Send.
+        {isUploading
+          ? 'Sending the picture…'
+          : 'A draft is written by the AI and goes in the box. Nothing reaches the customer until you press Send. Pictures send as soon as you choose one.'}
       </p>
     </div>
   )

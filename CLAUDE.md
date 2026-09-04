@@ -67,6 +67,13 @@ substrings of the customer's question — because Thai has no word boundaries.
 Scoring sums matched tag *length*, not count. `pg_trgm`/`unaccent` are
 deliberately avoided (wrong `search_path` on Supabase Cloud breaks migrations).
 
+**Pictures take the same funnel.** `dispatchOutbound` gains an `imageUrl` and
+`sendToLine` builds an image message instead of a text one; there is no second
+path. The URL lives in `messages.media_url`, never in `content` — `content` is
+what the model and the conversation-list preview read. Files sit in the public
+`chat-media` bucket because LINE fetches them with none of our credentials.
+`show_image` can only name an FAQ entry `search_faq` just returned.
+
 **Every row goes through the secret key.** RLS is on with zero policies; the
 browser holds only the publishable key and uses it for Realtime broadcast
 alone. `createAdminClient()` is created per call, never memoized.
