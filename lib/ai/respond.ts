@@ -7,13 +7,15 @@ import {
   getConversationTarget,
   releaseAiRun,
 } from '@/lib/data/conversations'
-import { listMessages } from '@/lib/data/messages'
+import { latestInboundMessageId, listMessages } from '@/lib/data/messages'
 import { dispatchOutbound } from '@/lib/messaging/dispatch'
-import { featureReady } from '@/lib/env'
+import { env, featureReady } from '@/lib/env'
 import type { ChatMessage } from '@/lib/types'
 
 /** Enough for the agent to follow a short exchange without re-reading a whole history. */
 const HISTORY_LIMIT = 20
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 export type RespondOutcome =
   | 'sent'
@@ -29,6 +31,8 @@ export type RespondOutcome =
   | 'handed-off'
   /** A draft for the operator. Nothing was written and nothing was sent. */
   | 'drafted'
+  /** The customer kept typing; a later run will answer all of it at once. */
+  | 'batched'
   | 'failed'
 
 export interface RespondResult {
@@ -77,6 +81,12 @@ function finalReplyText(messages: BaseMessage[]): string {
  */
 export async function respondWithAi(params: {
   conversationId: string
+  /**
+   * The message that started this run. Given it, the run can tell whether the
+   * customer has said anything since — which is what makes waiting useful
+   * rather than merely slow.
+   */
+  triggeredByMessageId?: string | null
   replyToken?: string | null
   replyTokenIssuedAt?: Date | string | null
 }): Promise<RespondResult> {
@@ -85,6 +95,30 @@ export async function respondWithAi(params: {
   const conversation = await getConversationTarget(params.conversationId)
   if (!conversation) return { outcome: 'skipped', reason: 'conversation not found' }
   if (conversation.mode !== 'ai') return { outcome: 'skipped', reason: 'conversation is manual' }
+
+  /**
+   * Wait for the customer to stop typing, then decide whether this run is still
+   * the one that should speak.
+   *
+   * People send a thought in pieces — "ขอถามหน่อย", "ร้านเปิดกี่โมง", "แล้วมีที่จอดรถไหม" —
+   * and answering the first piece alone answers a third of the question. So
+   * every run pauses, and then only the run belonging to the *newest* message
+   * carries on; the earlier ones stand down. The survivor reads the whole
+   * history a moment later, so the three messages become one answer without
+   * anything having to stitch them together.
+   *
+   * This happens before the claim rather than after. Claiming first would let
+   * the first message hold the conversation and turn every message behind it
+   * into a `busy` that never gets answered, which is the failure this replaces.
+   */
+  if (params.triggeredByMessageId) {
+    if (env.AI_DEBOUNCE_MS > 0) await sleep(env.AI_DEBOUNCE_MS)
+
+    const newest = await latestInboundMessageId(params.conversationId)
+    if (newest && newest !== params.triggeredByMessageId) {
+      return { outcome: 'batched', reason: 'the customer sent something newer' }
+    }
+  }
 
   const runId = await claimAiRun(params.conversationId)
   if (!runId) return { outcome: 'busy' }

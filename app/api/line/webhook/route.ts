@@ -132,6 +132,8 @@ export async function POST(request: Request) {
         // no-op on a manual conversation, or with no OpenRouter key configured.
         const outcome = await respondWithAi({
           conversationId,
+          // Lets the run stand down if the customer keeps typing.
+          triggeredByMessageId: result.messageId,
           replyToken: messageEvent.replyToken,
           // LINE's own receipt time, not ours. On a redelivered event that is
           // genuinely old, which is exactly when the reply token is dead and the

@@ -61,6 +61,12 @@ right before sending, discarding the reply if an operator took over meanwhile.
 `/suggest` runs the same agent but writes and sends nothing, and withholds the
 handoff tool.
 
+**A burst of messages becomes one answer.** Every AI run sleeps `AI_DEBOUNCE_MS`
+(4s default, 0 in tests) and then stands down if a newer inbound message exists,
+so only the newest run answers and it sees the whole burst in history. The pause
+is deliberately *before* `claimAiRun` — claiming first is what made every
+message after the first one silent.
+
 **The agent may only speak from the FAQ table** (`lib/ai/tools.ts` →
 `lib/data/faq.ts`). Matching runs *backwards* — an entry's tags are tested as
 substrings of the customer's question — because Thai has no word boundaries.

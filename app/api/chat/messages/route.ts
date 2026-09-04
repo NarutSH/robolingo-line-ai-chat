@@ -57,7 +57,10 @@ export async function POST(request: Request) {
   // Same as the LINE path: the reply is generated after the response is on its
   // way, and there is no reply token because there was no inbound webhook.
   after(async () => {
-    const outcome = await respondWithAi({ conversationId: conversation.id })
+    const outcome = await respondWithAi({
+      conversationId: conversation.id,
+      triggeredByMessageId: messageId,
+    })
     if (outcome.outcome === 'failed') {
       console.error('[ai] could not answer web visitor', conversation.id, outcome.reason)
     }

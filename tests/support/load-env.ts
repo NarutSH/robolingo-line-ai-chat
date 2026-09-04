@@ -24,6 +24,15 @@ try {
   // No .env.local — the environment is expected to be supplied already.
 }
 
+/**
+ * No real waiting in the suite. The debounce's *decision* — an earlier run
+ * standing down once a newer message exists — is exercised by letting both
+ * webhooks record their messages before after() is flushed, which is the same
+ * ordering the wait produces in production. Sleeping for real would add seconds
+ * per AI test and prove nothing extra.
+ */
+process.env.AI_DEBOUNCE_MS = '0'
+
 if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
   throw new Error(
     'No Supabase configuration found. Tests run against a real database; ' +

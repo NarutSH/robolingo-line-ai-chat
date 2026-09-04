@@ -39,6 +39,20 @@ const schema = z.object({
     z.string().min(1).default('anthropic/claude-haiku-4.5')
   ),
 
+  /**
+   * How long the agent waits for the customer to finish typing before it
+   * answers. People send a thought across two or three messages; replying to
+   * the first one alone answers half a question and buries the rest.
+   *
+   * Configurable because it is a judgement about people, not a fact about the
+   * system, and because the tests set it to zero — the supersede decision is
+   * what matters there, and a real wait would only make the suite slower.
+   */
+  AI_DEBOUNCE_MS: z.preprocess(
+    (v) => (v === '' || v === undefined ? undefined : Number(v)),
+    z.number().int().min(0).max(30_000).default(4000)
+  ),
+
   // Operator console — required from phase 1
   OPERATOR_PASSWORD: optionalSecret(),
   SESSION_SECRET: optionalSecret(16),
@@ -52,6 +66,7 @@ const parsed = schema.safeParse({
   LINE_CHANNEL_SECRET: process.env.LINE_CHANNEL_SECRET,
   OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
   OPENROUTER_MODEL: process.env.OPENROUTER_MODEL,
+  AI_DEBOUNCE_MS: process.env.AI_DEBOUNCE_MS,
   OPERATOR_PASSWORD: process.env.OPERATOR_PASSWORD,
   SESSION_SECRET: process.env.SESSION_SECRET,
 })

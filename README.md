@@ -117,6 +117,33 @@ decision, which is the whole reason the button exists instead of the AI simply
 answering. The handoff tool is withheld on that path — the operator is already
 the human it would hand to.
 
+## When a customer types in bursts
+
+People send a thought in pieces: "ขอถามหน่อย", then "ร้านเปิดกี่โมง", then "แล้วมีที่จอดรถไหม".
+Answering the first piece answers a third of the question, and the pieces behind
+it used to get nothing at all — the first run claimed the conversation and every
+run behind it found it busy and exited.
+
+So every run pauses before it claims anything, and then checks whether the
+customer has said anything since it started. If they have, it stands down; the
+run belonging to the newest message carries on alone. That survivor reads the
+whole history a moment later, so the three messages arrive at the model as three
+turns and come back as one answer. Nothing stitches them together, because
+nothing has to.
+
+**The pause comes before the claim, not after,** and that ordering is the whole
+fix. Claiming first is what turned the second and third message into silence.
+
+The wait is `AI_DEBOUNCE_MS`, four seconds by default. It is a judgement about
+people rather than a fact about the system, which is why it is configuration:
+long enough to catch a burst, short enough that someone who sent one message is
+not left staring at the screen. It costs the single-message case those four
+seconds, and that is the trade being made deliberately.
+
+If two messages happen to land in the same millisecond the tie breaks
+arbitrarily — and harmlessly. Whichever run wins reads both messages, so the
+customer still gets exactly one answer covering everything they said.
+
 ## What the agent knows
 
 Everything the agent can say about the shop comes from one table, looked up

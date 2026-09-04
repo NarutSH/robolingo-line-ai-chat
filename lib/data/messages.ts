@@ -28,6 +28,28 @@ export async function listMessages(conversationId: string, limit = 100): Promise
     .reverse()
 }
 
+/**
+ * The id of the newest thing the customer said.
+ *
+ * Used to decide which of several runs should answer when someone sends two or
+ * three messages in a row: whichever run was started by this message is the one
+ * that speaks, and the others stand down.
+ */
+export async function latestInboundMessageId(conversationId: string): Promise<string | null> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('messages')
+    .select('id')
+    .eq('conversation_id', conversationId)
+    .eq('direction', 'inbound')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (error) throw new Error(`latestInboundMessageId failed: ${error.message}`)
+  return data?.id ?? null
+}
+
 /** Records the outbound message before it is sent, so a send failure is visible in the UI. */
 export async function createOutboundMessage(params: {
   conversationId: string
