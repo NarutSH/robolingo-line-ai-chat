@@ -63,13 +63,20 @@ function toModelHistory(messages: ChatMessage[]): BaseMessage[] {
 }
 
 /**
- * The last *AI* message, not simply the last one. Taking the tail would hand a
- * raw tool result to the customer if the transcript ever ended on one — a
- * mistake they would read, so it is worth being explicit about.
+ * The last AI message *that actually said something*.
+ *
+ * Two things are being avoided. Taking the tail of the transcript would hand a
+ * raw tool result to the customer, which they would read. And taking merely the
+ * last AI message loses the reply whenever the run ends on an empty one — a
+ * model that writes its sentence in the same turn as a tool call, then closes
+ * with nothing, is common enough that it silently cost a customer their answer
+ * in production. Skipping the empty tail finds the sentence that was written.
  */
 function finalReplyText(messages: BaseMessage[]): string {
-  const produced = messages.findLast((message) => message.getType() === 'ai')
-  return typeof produced?.text === 'string' ? produced.text.trim() : ''
+  const produced = messages.findLast(
+    (message) => message.getType() === 'ai' && typeof message.text === 'string' && message.text.trim()
+  )
+  return produced ? String(produced.text).trim() : ''
 }
 
 /**
@@ -151,8 +158,14 @@ export async function respondWithAi(params: {
     )
 
     const text = finalReplyText(result.messages)
+    const image = requested.image
 
-    if (!text) {
+    // A picture the agent asked for is an intention it stated out loud, so a
+    // silent model must not cancel it. Without this the customer who asked to
+    // see the menu got nothing at all: no words, and no picture either.
+    const caption = text || (image ? 'ส่งรูปให้ดูนะครับ' : '')
+
+    if (!caption) {
       await releaseAiRun(params.conversationId, runId, 'idle')
       return { outcome: 'skipped', reason: 'the model produced no text' }
     }
@@ -181,7 +194,7 @@ export async function respondWithAi(params: {
     await dispatchOutbound({
       conversation,
       sender: 'ai',
-      text,
+      text: caption,
       // The run started seconds ago inside after(), so the reply token is very
       // likely still alive — which spends no push quota. sendToLine falls back
       // to a push on its own if it is not.
@@ -197,7 +210,6 @@ export async function respondWithAi(params: {
     // A picture that fails to send must not take the written answer down with
     // it. The answer is already delivered; the customer keeps it, the failed
     // row stays visible in the console, and an operator can resend.
-    const image = requested.image
     if (image) {
       try {
         await dispatchOutbound({
@@ -212,7 +224,7 @@ export async function respondWithAi(params: {
     }
 
     await releaseAiRun(params.conversationId, runId, 'idle')
-    return { outcome: handedOff ? 'handed-off' : 'sent', text }
+    return { outcome: handedOff ? 'handed-off' : 'sent', text: caption }
   } catch (cause) {
     const reason = cause instanceof Error ? cause.message : String(cause)
     console.error('[ai] run failed', cause)

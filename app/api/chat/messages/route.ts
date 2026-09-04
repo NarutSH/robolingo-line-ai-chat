@@ -61,8 +61,9 @@ export async function POST(request: Request) {
       conversationId: conversation.id,
       triggeredByMessageId: messageId,
     })
-    if (outcome.outcome === 'failed') {
-      console.error('[ai] could not answer web visitor', conversation.id, outcome.reason)
+    if (outcome.outcome !== 'sent' && outcome.outcome !== 'handed-off') {
+      const log = outcome.outcome === 'failed' ? console.error : console.warn
+      log('[ai] nothing sent to web visitor', conversation.id, outcome.outcome, outcome.reason ?? '')
     }
   })
 

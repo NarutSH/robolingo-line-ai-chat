@@ -161,6 +161,66 @@ describe('pictures in a conversation', () => {
     expect(sent[1].via).toBe('push')
   })
 
+  it('keeps the sentence a model wrote before it closed on an empty turn', async () => {
+    // The shape that cost a real customer their answer: the reply and the tool
+    // call arrive together, then the model signs off saying nothing. Reading
+    // only the last AI message finds the empty one and concludes there is
+    // nothing to send — words and picture both lost.
+    fakeFetch({
+      'api.line.me': lineOk(),
+      'openrouter.ai': openRouter(
+        { call: { name: 'search_faq', args: { question: 'ขอดูเมนู' } } },
+        { say: 'ส่งเมนูให้ดูนะครับ', call: { name: 'show_image', args: { image: TEST_SLUG } } },
+        { say: '' }
+      ),
+    })
+    const seeded = await seedLineConversation({ mode: 'ai' })
+
+    await webhook(signedWebhook({ userId: seeded.lineUserId, text: 'ขอดูเมนู' }))
+    await flushAfter()
+
+    const outbound = (await messagesIn(seeded.conversationId)).filter(
+      (m) => m.direction === 'outbound'
+    )
+    expect(outbound).toHaveLength(2)
+    expect(outbound[0].content).toBe('ส่งเมนูให้ดูนะครับ')
+    expect(outbound[1].media_url).toBe(PUBLISHED_URL)
+  })
+
+  it('still sends a requested picture when the model never wrote a word', async () => {
+    fakeFetch({
+      'api.line.me': lineOk(),
+      'openrouter.ai': openRouter(
+        { call: { name: 'show_image', args: { image: TEST_SLUG } } },
+        { say: '' }
+      ),
+    })
+    const seeded = await seedLineConversation({ mode: 'ai' })
+
+    await webhook(signedWebhook({ userId: seeded.lineUserId, text: 'ขอดูเมนู' }))
+    await flushAfter()
+
+    const outbound = (await messagesIn(seeded.conversationId)).filter(
+      (m) => m.direction === 'outbound'
+    )
+    // A picture the agent asked for is an intention it stated; a silent model
+    // must not be allowed to cancel it.
+    expect(outbound).toHaveLength(2)
+    expect(outbound[0].content_type).toBe('text')
+    expect(outbound[1].media_url).toBe(PUBLISHED_URL)
+    expect(sentToLine().at(-1)?.imageUrl).toBe(PUBLISHED_URL)
+  })
+
+  it('says nothing at all when there is neither a word nor a picture', async () => {
+    fakeFetch({ 'api.line.me': lineOk(), 'openrouter.ai': openRouter({ say: '' }) })
+    const seeded = await seedLineConversation({ mode: 'ai' })
+
+    await webhook(signedWebhook({ userId: seeded.lineUserId, text: 'สวัสดี' }))
+    await flushAfter()
+
+    expect(sentToLine()).toHaveLength(0)
+  })
+
   it('will not send a picture the shop has not published', async () => {
     fakeFetch({
       'api.line.me': lineOk(),

@@ -6,23 +6,27 @@ import { calls, type Handler } from './fetch-fake'
  * testable: the first response asks for the tool, the second answers with what
  * came back.
  */
-export type ModelTurn = { say: string } | { call: { name: string; args: unknown } }
+/**
+ * A turn may say something, call a tool, or do both at once — which is the
+ * shape that mattered: a model that writes its sentence alongside the tool call
+ * and then closes with an empty message.
+ */
+export type ModelTurn = { say?: string; call?: { name: string; args: unknown } }
 
 function completion(turn: ModelTurn): Record<string, unknown> {
-  const message =
-    'say' in turn
-      ? { role: 'assistant', content: turn.say }
-      : {
-          role: 'assistant',
-          content: null,
-          tool_calls: [
-            {
-              id: `call_${Math.random().toString(36).slice(2, 10)}`,
-              type: 'function',
-              function: { name: turn.call.name, arguments: JSON.stringify(turn.call.args) },
-            },
-          ],
-        }
+  const message = turn.call
+    ? {
+        role: 'assistant',
+        content: turn.say ?? null,
+        tool_calls: [
+          {
+            id: `call_${Math.random().toString(36).slice(2, 10)}`,
+            type: 'function',
+            function: { name: turn.call.name, arguments: JSON.stringify(turn.call.args) },
+          },
+        ],
+      }
+    : { role: 'assistant', content: turn.say ?? '' }
 
   return {
     // Unique per call, and load-bearing. LangGraph's message reducer identifies
@@ -33,7 +37,7 @@ function completion(turn: ModelTurn): Record<string, unknown> {
     created: Math.floor(Date.now() / 1000),
     model: 'test-model',
     choices: [
-      { index: 0, message, finish_reason: 'say' in turn ? 'stop' : 'tool_calls' },
+      { index: 0, message, finish_reason: turn.call ? 'tool_calls' : 'stop' },
     ],
     usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
   }

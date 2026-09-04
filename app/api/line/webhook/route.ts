@@ -140,8 +140,13 @@ export async function POST(request: Request) {
           // send should fall back to a push.
           replyTokenIssuedAt: new Date(messageEvent.timestamp ?? Date.now()),
         })
-        if (outcome.outcome === 'failed') {
-          console.error('[ai] could not answer', conversationId, outcome.reason)
+        // Anything that did not put words in front of the customer is worth a
+        // line. A run that quietly decides to say nothing used to leave no
+        // trace at all, which made a real silence invisible until someone read
+        // the database.
+        if (outcome.outcome !== 'sent' && outcome.outcome !== 'handed-off') {
+          const log = outcome.outcome === 'failed' ? console.error : console.warn
+          log('[ai] nothing sent', conversationId, outcome.outcome, outcome.reason ?? '')
         }
       })
     }
