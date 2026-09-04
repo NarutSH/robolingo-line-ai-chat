@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useOptimistic, useRef, useState, useTransition } from 'react'
-import type { ChatMessage } from '@/lib/types'
+import { conversationState, type ChatMessage } from '@/lib/types'
 import { useLiveUpdates } from '@/hooks/use-live-updates'
 import { useStickToBottom } from '@/hooks/use-stick-to-bottom'
 import { MessageBubble, type BubbleTone } from '@/components/chat/message-bubble'
@@ -9,7 +9,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ImagePlus } from 'lucide-react'
 import { downscaleImage, ImageUnreadable } from '@/lib/media/downscale'
-import { ModeIndicator } from '@/components/console/mode-indicator'
+import { StateIndicator } from '@/components/console/state-indicator'
+
 
 /**
  * How often to ask when nobody is telling us. Once the live channel is
@@ -39,6 +40,7 @@ export function MessageThread({
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [mode, setMode] = useState<Mode>('manual')
+  const [handoffReason, setHandoffReason] = useState<string | null>(null)
   const [realtimeTopic, setRealtimeTopic] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
@@ -69,6 +71,7 @@ export function MessageThread({
     return (await res.json()) as {
       messages: ChatMessage[]
       mode: Mode
+      handoffReason: string | null
       realtimeTopic: string | null
     }
   }, [conversationId])
@@ -82,6 +85,7 @@ export function MessageThread({
         if (!cancelled) {
           setMessages(json.messages)
           setMode(json.mode)
+          setHandoffReason(json.handoffReason)
           setRealtimeTopic(json.realtimeTopic)
           setError(null)
         }
@@ -211,6 +215,7 @@ export function MessageThread({
       const refreshed = await load()
       setMessages(refreshed.messages)
       setMode(refreshed.mode)
+      setHandoffReason(refreshed.handoffReason)
       setRealtimeTopic(refreshed.realtimeTopic)
     } catch {
       // The send already reported its own outcome; a failed refresh is the
@@ -261,7 +266,11 @@ export function MessageThread({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center justify-between gap-3 border-b px-4 py-2">
-        <ModeIndicator mode={mode} detail="full" className="text-xs" />
+        <StateIndicator
+          state={conversationState({ mode, handoffReason })}
+          detail="full"
+          className="text-xs"
+        />
         <Button
           type="button"
           variant="outline"
@@ -272,6 +281,12 @@ export function MessageThread({
           {aiIsAnswering ? 'Take over' : 'Hand back to the AI'}
         </Button>
       </div>
+
+      {handoffReason && mode === 'manual' && (
+        <p className="border-b border-waiting/30 bg-waiting/10 px-4 py-2 text-xs text-waiting-ink">
+          <span className="font-medium">Why it came to you:</span> {handoffReason}
+        </p>
+      )}
 
       <div
         ref={scrollRef}

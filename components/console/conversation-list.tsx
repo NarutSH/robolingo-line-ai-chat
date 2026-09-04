@@ -4,8 +4,9 @@ import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import type { ConversationSummary } from '@/lib/data/conversations'
+import { conversationState, type ConversationState } from '@/lib/types'
 import { useLiveUpdates } from '@/hooks/use-live-updates'
-import { ModeIndicator } from '@/components/console/mode-indicator'
+import { StateIndicator } from '@/components/console/state-indicator'
 
 const POLL_MS = 3000
 /** Kept as a safety net once the live channel is carrying updates. */
@@ -23,8 +24,19 @@ function relativeTime(iso: string) {
   return `${Math.floor(seconds / 86400)}d`
 }
 
+type Filter = 'all' | 'needs-you' | 'ai'
+
+const FILTERS: Array<{ id: Filter; label: string; covers: (state: ConversationState) => boolean }> = [
+  { id: 'all', label: 'All', covers: () => true },
+  // Both human states, because "is anyone waiting on me" is the question an
+  // operator opens this list to answer — not "did the AI or I take it".
+  { id: 'needs-you', label: 'Needs a person', covers: (s) => s !== 'ai' },
+  { id: 'ai', label: 'AI', covers: (s) => s === 'ai' },
+]
+
 export function ConversationList() {
   const params = useParams<{ conversationId?: string }>()
+  const [filter, setFilter] = useState<Filter>('all')
   const activeId = params?.conversationId
   const [conversations, setConversations] = useState<ConversationSummary[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -100,11 +112,43 @@ export function ConversationList() {
     )
   }
 
+  const shown = conversations.filter((c) => {
+    const active = FILTERS.find((f) => f.id === filter)
+    return active ? active.covers(conversationState(c)) : true
+  })
+
   return (
-    <ul className="divide-y">
-      {conversations.map((conversation) => {
+    <div>
+      <div className="flex gap-1 border-b p-2" role="group" aria-label="Filter conversations">
+        {FILTERS.map((option) => {
+          const count = conversations.filter((c) => option.covers(conversationState(c))).length
+          const isOn = filter === option.id
+          return (
+            <button
+              key={option.id}
+              type="button"
+              aria-pressed={isOn}
+              onClick={() => setFilter(option.id)}
+              className={`rounded-lg px-2 py-1 text-xs transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none ${
+                isOn ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {option.label}
+              <span className="ml-1 tabular-nums opacity-70">{count}</span>
+            </button>
+          )
+        })}
+      </div>
+
+      {shown.length === 0 && (
+        <p className="p-4 text-sm text-muted-foreground">Nothing in this view.</p>
+      )}
+
+      <ul className="divide-y">
+      {shown.map((conversation) => {
         const isActive = conversation.id === activeId
         const isWeb = conversation.channel === 'web'
+        const state = conversationState(conversation)
         // A web visitor has no name to show, and calling them an unknown LINE
         // user would be actively wrong.
         const name = conversation.displayName ?? (isWeb ? 'Web visitor' : 'Unknown LINE user')
@@ -132,7 +176,7 @@ export function ConversationList() {
                   <span className="flex shrink-0 items-center gap-1.5">
                     {/* Which conversations need a person, readable without
                         opening any of them — and without relying on the colour. */}
-                    <ModeIndicator mode={conversation.mode} className="text-xs" />
+                    <StateIndicator state={state} className="text-xs" />
                     <span className="text-xs text-muted-foreground tabular-nums">
                       {relativeTime(conversation.lastMessageAt)}
                     </span>
@@ -151,11 +195,17 @@ export function ConversationList() {
                     </span>
                   )}
                 </span>
+                {conversation.handoffReason && (
+                  <span className="mt-1 block truncate text-xs text-waiting-ink">
+                    ↑ {conversation.handoffReason}
+                  </span>
+                )}
               </span>
             </Link>
           </li>
         )
       })}
-    </ul>
+      </ul>
+    </div>
   )
 }

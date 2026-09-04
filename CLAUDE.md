@@ -61,6 +61,14 @@ right before sending, discarding the reply if an operator took over meanwhile.
 `/suggest` runs the same agent but writes and sends nothing, and withholds the
 handoff tool.
 
+**Three inbox states, not two.** `mode` alone cannot tell an escalation from a
+conversation an operator took over — both are `manual`. `handoff_reason` is the
+discriminator, and `conversationState()` in `lib/types.ts` derives it. That
+helper lives with the shared types rather than in `lib/data/conversations.ts`
+because the console calls it in the browser and the data module is server-only.
+`listConversations` sorts escalated first, in JS, since the ordering is over a
+derived state.
+
 **A burst of messages becomes one answer.** Every AI run sleeps `AI_DEBOUNCE_MS`
 (4s default, 0 in tests) and then stands down if a newer inbound message exists,
 so only the newest run answers and it sees the whole burst in history. The pause

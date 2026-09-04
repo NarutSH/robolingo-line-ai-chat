@@ -1,5 +1,6 @@
 import 'server-only'
 import { createAdminClient } from '@/lib/supabase/server'
+import { conversationState, type ConversationState } from '@/lib/types'
 
 export interface ConversationSummary {
   id: string
@@ -12,6 +13,13 @@ export interface ConversationSummary {
   unreadCount: number
   lastMessageAt: string
   lastMessagePreview: string | null
+  /**
+   * Why the agent stepped back, when it was the agent that did. Null on a
+   * conversation an operator simply took over — which is how the two are told
+   * apart, since both leave the conversation in `manual`.
+   */
+  handoffReason: string | null
+  handoffAt: string | null
 }
 
 /**
@@ -42,14 +50,14 @@ export async function listConversations(): Promise<ConversationSummary[]> {
   const { data, error } = await supabase
     .from('conversations')
     .select(
-      'id, channel, mode, unread_count, last_message_at, last_message_preview, line_users(line_user_id, display_name, picture_url, is_friend)'
+      'id, channel, mode, unread_count, last_message_at, last_message_preview, handoff_reason, handoff_at, line_users(line_user_id, display_name, picture_url, is_friend)'
     )
     .order('last_message_at', { ascending: false })
     .limit(100)
 
   if (error) throw new Error(error.message)
 
-  return (data ?? []).map((row) => ({
+  const summaries: ConversationSummary[] = (data ?? []).map((row) => ({
     id: row.id,
     channel: row.channel,
     mode: row.mode,
@@ -57,14 +65,36 @@ export async function listConversations(): Promise<ConversationSummary[]> {
     unreadCount: row.unread_count,
     lastMessageAt: row.last_message_at,
     lastMessagePreview: row.last_message_preview,
+    handoffReason: row.handoff_reason,
+    handoffAt: row.handoff_at,
   }))
+
+  /**
+   * Recency alone buries the people who are actually waiting: a question the
+   * agent gave up on an hour ago sinks under a conversation the agent is
+   * happily handling right now. So the queue leads with what needs a person,
+   * and recency orders within each group.
+   *
+   * Sorted here rather than in SQL because the ordering is over a derived state
+   * rather than a column, and a hundred rows is nothing. The query still asks
+   * for the hundred most recent, so this reorders that window rather than
+   * paging through the table.
+   */
+  const rank: Record<ConversationState, number> = { escalated: 0, manual: 1, ai: 2 }
+  return summaries.sort((a, b) => {
+    const byState = rank[conversationState(a)] - rank[conversationState(b)]
+    if (byState !== 0) return byState
+    return b.lastMessageAt.localeCompare(a.lastMessageAt)
+  })
 }
 
 export async function getConversationTarget(conversationId: string) {
   const supabase = createAdminClient()
   const { data, error } = await supabase
     .from('conversations')
-    .select('id, channel, mode, realtime_token, line_users(line_user_id, display_name, picture_url, is_friend)')
+    .select(
+      'id, channel, mode, realtime_token, handoff_reason, line_users(line_user_id, display_name, picture_url, is_friend)'
+    )
     .eq('id', conversationId)
     .maybeSingle()
 
@@ -76,6 +106,7 @@ export async function getConversationTarget(conversationId: string) {
     channel: data.channel,
     mode: data.mode,
     realtimeToken: data.realtime_token,
+    handoffReason: data.handoff_reason,
     ...contactFields(data.line_users),
   }
 }

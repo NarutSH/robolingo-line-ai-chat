@@ -117,6 +117,32 @@ decision, which is the whole reason the button exists instead of the AI simply
 answering. The handoff tool is withheld on that path — the operator is already
 the human it would hand to.
 
+## Knowing who is waiting
+
+Two things put a conversation in front of a person, and they are not the same
+job. An operator pressing **Take over** is work someone has already chosen. The
+agent handing off is a question nobody has picked up yet — and it is the one
+that gets forgotten, because until it is answered nothing in the conversation
+moves and recency sinks it under whatever the agent is chatting about now.
+
+Both leave the conversation in `manual`, so the mode alone cannot tell them
+apart. `handoff_reason` can: set means the agent stepped back, null means a
+person took it. The inbox reads that and shows three states rather than two —
+**Needs you**, **You**, **AI** — each as words beside its dot, because this is
+the fact the whole list is scanned for and a colour alone does not survive a
+colour-vision deficiency.
+
+The queue leads with what needs a person and orders by recency within each
+group, so an escalation from an hour ago sits above a conversation the agent is
+happily handling. That ordering is done after the query rather than in it: it
+sorts on a derived state rather than a column, and a hundred rows is nothing.
+
+**The reason is shown where the decision is made.** It was already written into
+the thread as a system note, which meant opening every conversation to find out
+why it wanted you. It now sits in the list row and again at the top of the
+thread, arriving on the same poll as the messages so a handoff that happens
+while you are reading appears without a reload.
+
 ## When a customer types in bursts
 
 People send a thought in pieces: "ขอถามหน่อย", then "ร้านเปิดกี่โมง", then "แล้วมีที่จอดรถไหม".
