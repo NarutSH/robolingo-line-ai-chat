@@ -111,7 +111,8 @@ instead of failing. `/api/health` reports what is configured.
 
 - `app/api/**` — route handlers; these are the tested seam.
 - `lib/line/`, `lib/ai/`, `lib/data/`, `lib/messaging/`, `lib/auth/`, `lib/supabase/`
-- `components/console/`, `components/chat/`, `hooks/use-live-updates.ts` (Realtime + polling fallback)
+- `lib/faq/`, `lib/media/` — rules and helpers the browser needs too, so no `server-only`
+- `components/console/`, `components/console/training/`, `components/chat/`, `hooks/use-live-updates.ts` (Realtime + polling fallback)
 - `supabase/migrations/` — the only source of schema truth.
 
 ## Tests

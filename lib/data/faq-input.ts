@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { SLUG_MAX_LENGTH, SLUG_PATTERN } from '@/lib/faq/tags'
 
 /**
  * What the console may set on an FAQ entry.
@@ -16,6 +17,10 @@ export const faqEntrySchema = z.object({
    * for being *inside* the customer's message, so a long tag matches almost
    * nothing and a one-character tag matches almost everything — hence the
    * bounds, which are the cheapest place to stop a tag that ruins the ranking.
+   *
+   * Two characters is the hard floor. The console warns above it as well, and
+   * about words that carry no subject at any length — see `tagWarnings` — but
+   * that is advice and this is a refusal, so the two numbers differ on purpose.
    */
   tags: z
     .array(z.string().trim().min(2, 'A tag needs at least two characters.').max(40))
@@ -24,9 +29,9 @@ export const faqEntrySchema = z.object({
   slug: z
     .string()
     .trim()
-    .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, 'Use lowercase letters, numbers and dashes.')
+    .regex(SLUG_PATTERN, 'Use lowercase letters, numbers and dashes.')
     .min(2)
-    .max(40)
+    .max(SLUG_MAX_LENGTH)
     .nullable()
     .default(null),
   isActive: z.boolean().default(true),

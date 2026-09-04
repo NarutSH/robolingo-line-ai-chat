@@ -128,6 +128,21 @@ export async function setFaqEntryImage(id: string, imageUrl: string | null): Pro
 }
 
 /**
+ * Put the answers in the given order, spaced by ten.
+ *
+ * One statement, in plpgsql, for the same reason the ingest is: the caller hands
+ * over a whole ordering and either gets it or gets none of it. A loop of updates
+ * from here could stop halfway and leave a list whose order matches neither what
+ * was on screen nor what was asked for.
+ */
+export async function reorderFaqEntries(ids: string[]): Promise<void> {
+  if (ids.length === 0) return
+  const supabase = createAdminClient()
+  const { error } = await supabase.rpc('reorder_faq_entries', { p_ids: ids })
+  if (error) throw new Error(`reorderFaqEntries failed: ${error.message}`)
+}
+
+/**
  * Deleting the row takes its picture with it. Storage does not cascade, so
  * without this the file would sit in the bucket for the life of the project
  * with nothing left that knows what it was for.
