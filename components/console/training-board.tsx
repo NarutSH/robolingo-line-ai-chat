@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
+import { downscaleImage, ImageUnreadable } from '@/lib/media/downscale'
 
 interface Draft {
   question: string
@@ -168,8 +169,19 @@ export function TrainingBoard() {
 
     setUploadingId(id)
     try {
+      // Shrunk here rather than sent as it came off the camera: the platform
+      // refuses an oversized body before our handler ever runs, and its reply
+      // is a plain-text 413 the operator cannot act on.
+      let prepared: File
+      try {
+        prepared = await downscaleImage(file)
+      } catch (cause) {
+        setError(cause instanceof ImageUnreadable ? cause.message : 'That image could not be read.')
+        return
+      }
+
       const form = new FormData()
-      form.set('image', file)
+      form.set('image', prepared)
       const res = await fetch(`/api/faq/${id}/image`, { method: 'POST', body: form })
 
       if (!res.ok) {
@@ -206,7 +218,9 @@ export function TrainingBoard() {
       <input
         ref={fileRef}
         type="file"
-        accept="image/jpeg,image/png"
+        // Anything the browser can decode: it is re-encoded as a JPEG on the way
+        // out, so a photo straight off a phone arrives in a form LINE accepts.
+        accept="image/*"
         className="sr-only"
         onChange={(event) => {
           const file = event.target.files?.[0]

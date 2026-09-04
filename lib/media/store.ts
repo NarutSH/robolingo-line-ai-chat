@@ -8,11 +8,19 @@ export const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png'] as const
 export type AcceptedImageType = (typeof ACCEPTED_IMAGE_TYPES)[number]
 
 /**
- * Five megabytes. LINE's own ceiling for originalContentUrl is ten, and the
- * bucket enforces this number too — the check here exists so an oversized file
- * is refused with a sentence the operator can read, rather than a storage error.
+ * Four megabytes, and the number is chosen to sit *below* the platform's
+ * request-body ceiling rather than below LINE's.
+ *
+ * LINE would take ten and the bucket is configured for five, but neither of
+ * those is the limit that bites first: an oversized body is refused at the edge
+ * before this route runs, and the reply is a plain-text 413 with no explanation
+ * an operator could act on. Keeping our own check underneath it means the
+ * refusal that actually happens is the one with a sentence attached.
+ *
+ * The console shrinks pictures in the browser before sending, so in practice
+ * this is reached only by something calling the API directly.
  */
-export const MAX_IMAGE_BYTES = 5 * 1024 * 1024
+export const MAX_IMAGE_BYTES = 4 * 1024 * 1024
 
 export function isAcceptedImageType(type: string): type is AcceptedImageType {
   return (ACCEPTED_IMAGE_TYPES as readonly string[]).includes(type)

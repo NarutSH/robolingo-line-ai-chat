@@ -3,7 +3,7 @@ import { POST as sendToConversation } from '@/app/api/conversations/[id]/message
 import { POST as webhook } from '@/app/api/line/webhook/route'
 import { createAdminClient } from '@/lib/supabase/server'
 import { SESSION_COOKIE, issueSessionValue } from '@/lib/auth/session'
-import { MEDIA_BUCKET } from '@/lib/media/store'
+import { MAX_IMAGE_BYTES, MEDIA_BUCKET } from '@/lib/media/store'
 import { fakeFetch } from './helpers/fetch-fake'
 import { lineContentGone, lineContentOk, lineOk, sentToLine, signedWebhook } from './helpers/line'
 import { openRouter } from './helpers/openrouter'
@@ -106,6 +106,26 @@ describe('pictures in a conversation', () => {
     expect(response.status).toBe(415)
     expect(await messagesIn(seeded.conversationId)).toHaveLength(0)
     expect(sentToLine()).toHaveLength(0)
+  })
+
+  it('refuses a picture larger than the platform would carry, in words', async () => {
+    fakeFetch({ 'api.line.me': lineOk() })
+    const seeded = await seedLineConversation({ mode: 'manual' })
+    signIn()
+
+    // Just over our own ceiling, which sits under the platform's on purpose:
+    // past the platform's, the request never reaches this handler and the
+    // operator gets a plain-text 413 from the edge instead of a sentence.
+    const tooBig = Buffer.alloc(MAX_IMAGE_BYTES + 1)
+
+    const response = await sendToConversation(
+      uploadRequest(imageUpload(tooBig, 'image/jpeg')),
+      params(seeded.conversationId)
+    )
+
+    expect(response.status).toBe(413)
+    expect((await response.json()).error).toContain('larger than')
+    expect(await messagesIn(seeded.conversationId)).toHaveLength(0)
   })
 
   it('sends the published picture after the sentence that introduces it', async () => {

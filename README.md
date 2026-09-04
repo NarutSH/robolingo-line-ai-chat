@@ -221,6 +221,16 @@ It is told not to describe what is in the image, because it has not seen it. The
 picture goes out *after* the sentence introducing it, as a push: the written
 reply has just spent the single-use reply token.
 
+**Pictures are shrunk in the browser before they are sent.** Not for tidiness:
+an oversized request body is refused at the edge before the route handler runs
+at all, and what comes back is a plain-text 413 with nothing an operator could
+act on. Re-encoding to a JPEG under a couple of megabytes sidesteps that, LINE's
+own ceiling, and the bucket's, and it makes the upload quicker besides. Our own
+size check sits deliberately *below* the platform's, so the refusal that
+actually happens is the one with a sentence attached. A side effect worth
+having: a photo straight off a phone that LINE would not accept arrives as one
+it will.
+
 **A customer's picture is copied rather than linked.** LINE releases message
 content only to the channel token and only for a while, so a URL pointing at
 LINE would be both unauthorised for the operator's browser and, before long,

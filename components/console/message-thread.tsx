@@ -8,6 +8,7 @@ import { MessageBubble, type BubbleTone } from '@/components/chat/message-bubble
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ImagePlus } from 'lucide-react'
+import { downscaleImage, ImageUnreadable } from '@/lib/media/downscale'
 import { ModeIndicator } from '@/components/console/mode-indicator'
 
 /**
@@ -174,8 +175,18 @@ export function MessageThread({
   async function sendImage(file: File) {
     setIsUploading(true)
     try {
+      // See lib/media/downscale.ts: the platform rejects a large body before
+      // this route is reached, with an error the operator cannot read.
+      let prepared: File
+      try {
+        prepared = await downscaleImage(file)
+      } catch (cause) {
+        setError(cause instanceof ImageUnreadable ? cause.message : 'That image could not be read.')
+        return
+      }
+
       const form = new FormData()
-      form.set('image', file)
+      form.set('image', prepared)
 
       const res = await fetch(`/api/conversations/${conversationId}/messages`, {
         method: 'POST',
@@ -330,7 +341,7 @@ export function MessageThread({
         <input
           ref={fileRef}
           type="file"
-          accept="image/jpeg,image/png"
+          accept="image/*"
           className="sr-only"
           onChange={(event) => {
             const file = event.target.files?.[0]
