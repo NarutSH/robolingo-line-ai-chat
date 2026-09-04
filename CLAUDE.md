@@ -2,7 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-@AGENTS.md
+This Next.js is newer than most training data. Check `node_modules/next/dist/docs/`
+before writing anything that touches a framework API, and heed deprecations.
 
 ## Commands
 

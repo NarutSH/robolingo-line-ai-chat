@@ -8,7 +8,7 @@ of staff can take over at any point.
 |---|---|
 | Console | https://robolingo-line-ai-chat.vercel.app/console |
 | Chat widget | https://robolingo-line-ai-chat.vercel.app/chat |
-| LINE OA | _(add link before sending)_ |
+| LINE OA | https://lin.ee/NXgJwT3 |
 
 > The console password was sent with this link, not committed here.
 

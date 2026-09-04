@@ -43,3 +43,6 @@ next-env.d.ts
 
 # Skill workspace: specs, wayfinder maps, tickets — not part of the submission
 .scratch/
+
+# Written back by `next dev` on every run. Build-tool scaffolding, not ours.
+AGENTS.md

@@ -28,17 +28,18 @@ import {
  */
 const UNDO_MS = 8000
 
-/**
- * What went wrong, in the server's words where it gave any. Every route here
- * answers a failure the same way — `{ error }` and a status — so reading one
- * belongs in one place rather than at each of the six call sites.
- */
+/** The same map without one key, since an unsaved draft has been dealt with. */
 function without(drafts: Record<string, Draft>, key: string): Record<string, Draft> {
   const kept = { ...drafts }
   delete kept[key]
   return kept
 }
 
+/**
+ * What went wrong, in the server's words where it gave any. Every route here
+ * answers a failure the same way — `{ error }` and a status — so reading one
+ * belongs in one place rather than at each of the six call sites.
+ */
 async function refusal(res: Response, fallback: string): Promise<string> {
   const json = (await res.json().catch(() => null)) as { error?: string } | null
   return json?.error ?? `${fallback} (${res.status})`
