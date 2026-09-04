@@ -17,17 +17,22 @@ export function ConsolePanes({ list, children }: { list: ReactNode; children: Re
   const params = useParams<{ conversationId?: string }>()
   const hasConversation = Boolean(params?.conversationId)
 
+  // Every link in the chain carries a definite height. Without one the thread's
+  // own overflow-y-auto has nothing to scroll within and grows the page instead,
+  // which stays invisible until a conversation is tall enough to notice — a
+  // picture is what made it show. Below the breakpoint exactly one pane is
+  // displayed, so a single full-height row is right; above it, columns.
   return (
-    <div className="grid min-h-0 md:grid-cols-[320px_minmax(0,1fr)]">
+    <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)] md:grid-cols-[320px_minmax(0,1fr)] md:grid-rows-none">
       <aside
         className={cn(
-          'min-h-0 overflow-y-auto border-r',
+          'h-full min-h-0 overflow-y-auto border-r',
           hasConversation ? 'hidden md:block' : 'block'
         )}
       >
         {list}
       </aside>
-      <main className={cn('min-h-0', hasConversation ? 'block' : 'hidden md:block')}>
+      <main className={cn('h-full min-h-0', hasConversation ? 'block' : 'hidden md:block')}>
         {children}
       </main>
     </div>

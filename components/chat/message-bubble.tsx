@@ -98,7 +98,7 @@ export function MessageBubble({
               alt={describePicture(message.content)}
               // Bounded rather than fluid: a portrait photo at full width would
               // push the rest of the thread off the screen.
-              className="max-h-80 w-auto max-w-full object-cover"
+              className="max-h-80 w-auto max-w-full object-contain"
               loading="lazy"
             />
           </div>

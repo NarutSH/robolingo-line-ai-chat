@@ -5,7 +5,7 @@ export const metadata: Metadata = { title: 'Training · LINE OA Console' }
 
 export default function TrainingPage() {
   return (
-    <main className="min-h-0 overflow-y-auto">
+    <main className="h-full min-h-0 overflow-y-auto">
       <TrainingBoard />
     </main>
   )
