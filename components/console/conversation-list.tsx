@@ -123,18 +123,27 @@ export function ConversationList() {
         {FILTERS.map((option) => {
           const count = conversations.filter((c) => option.covers(conversationState(c))).length
           const isOn = filter === option.id
+          // Red only where a number means somebody is waiting, and only when
+          // there is somebody: a red nought is an alarm about nothing.
+          const urgent = option.id === 'needs-you' && count > 0
           return (
             <button
               key={option.id}
               type="button"
               aria-pressed={isOn}
               onClick={() => setFilter(option.id)}
-              className={`rounded-lg px-2 py-1 text-xs transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none ${
+              className={`flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none ${
                 isOn ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:text-foreground'
               }`}
             >
               {option.label}
-              <span className="ml-1 tabular-nums opacity-70">{count}</span>
+              <span
+                className={`inline-flex min-w-4.5 justify-center rounded-full px-1.5 py-px text-[11px] font-medium tabular-nums ${
+                  urgent ? 'bg-attention text-attention-foreground' : 'bg-muted-foreground/15 text-muted-foreground'
+                }`}
+              >
+                {count}
+              </span>
             </button>
           )
         })}
