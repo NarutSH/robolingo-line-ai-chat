@@ -4,6 +4,7 @@ import { listMessages } from '@/lib/data/messages'
 import { dispatchOutbound, OutboundFailed } from '@/lib/messaging/dispatch'
 import { featureReady } from '@/lib/env'
 import {
+  conversationMediaPrefix,
   isAcceptedImageType,
   MAX_IMAGE_BYTES,
   storeImage,
@@ -102,7 +103,7 @@ export async function POST(request: Request, ctx: RouteContext<'/api/conversatio
     let imageUrl: string | null = null
     if (upload) {
       const stored = await storeImage({
-        conversationId: conversation.id,
+        prefix: conversationMediaPrefix(conversation.id),
         bytes: await upload.file.arrayBuffer(),
         contentType: upload.contentType,
       })

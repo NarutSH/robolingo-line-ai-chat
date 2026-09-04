@@ -73,6 +73,11 @@ substrings of the customer's question — because Thai has no word boundaries.
 Scoring sums matched tag *length*, not count. `pg_trgm`/`unaccent` are
 deliberately avoided (wrong `search_path` on Supabase Cloud breaks migrations).
 
+**The FAQ is editable from `/console/training`.** Writes live in
+`lib/data/faq-admin.ts`, kept out of `lib/data/faq.ts` so the agent's read path
+stays small. An entry needs a `slug` before a picture can be attached — the slug
+is the only handle `show_image` gets. The console routes are `app/api/faq/**`.
+
 **Pictures take the same funnel.** `dispatchOutbound` gains an `imageUrl` and
 `sendToLine` builds an image message instead of a text one; there is no second
 path. The URL lives in `messages.media_url`, never in `content` — `content` is

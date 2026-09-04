@@ -19,12 +19,17 @@ export function isAcceptedImageType(type: string): type is AcceptedImageType {
 }
 
 /**
- * Files are grouped by conversation so a conversation's pictures can be found
- * and removed together — the database cascades on delete and storage does not,
- * so without a predictable prefix the files would outlive the rows.
+ * Files are grouped by whatever owns them so a row's pictures can be found and
+ * removed together — the database cascades on delete and storage does not, so
+ * without a predictable prefix the files would outlive the rows.
  */
 export function conversationMediaPrefix(conversationId: string): string {
   return `conversations/${conversationId}`
+}
+
+/** Pictures the shop publishes against an FAQ answer, kept apart from chat. */
+export function faqMediaPrefix(entryId: string): string {
+  return `faq/${entryId}`
 }
 
 export interface StoredMedia {
@@ -41,12 +46,13 @@ export interface StoredMedia {
  * would turn a delivered message into a broken image days later.
  */
 export async function storeImage(params: {
-  conversationId: string
+  /** Where the file belongs — one of the prefix helpers above. */
+  prefix: string
   bytes: ArrayBuffer | Uint8Array
   contentType: AcceptedImageType
 }): Promise<StoredMedia> {
   const extension = params.contentType === 'image/png' ? 'png' : 'jpg'
-  const path = `${conversationMediaPrefix(params.conversationId)}/${crypto.randomUUID()}.${extension}`
+  const path = `${params.prefix}/${crypto.randomUUID()}.${extension}`
 
   const supabase = createAdminClient()
   const { error } = await supabase.storage
@@ -59,11 +65,21 @@ export async function storeImage(params: {
   return { url: data.publicUrl, path }
 }
 
-/** Removes every picture belonging to one conversation. Used by the test sweep. */
-export async function removeConversationMedia(conversationId: string): Promise<void> {
+/** The full paths of everything currently stored under one prefix. */
+export async function listMediaUnder(prefix: string): Promise<string[]> {
   const supabase = createAdminClient()
-  const prefix = conversationMediaPrefix(conversationId)
   const { data, error } = await supabase.storage.from(MEDIA_BUCKET).list(prefix)
-  if (error || !data?.length) return
-  await supabase.storage.from(MEDIA_BUCKET).remove(data.map((file) => `${prefix}/${file.name}`))
+  if (error || !data?.length) return []
+  return data.map((file) => `${prefix}/${file.name}`)
+}
+
+/** Removes exactly these files and nothing else. */
+export async function removeMediaPaths(paths: string[]): Promise<void> {
+  if (paths.length === 0) return
+  await createAdminClient().storage.from(MEDIA_BUCKET).remove(paths)
+}
+
+/** Removes every picture under one prefix. Used when a row goes, and by the test sweep. */
+export async function removeMediaUnder(prefix: string): Promise<void> {
+  await removeMediaPaths(await listMediaUnder(prefix))
 }

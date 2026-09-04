@@ -1,7 +1,12 @@
 import 'server-only'
 import { env } from '@/lib/env'
 import { createAdminClient } from '@/lib/supabase/server'
-import { isAcceptedImageType, MAX_IMAGE_BYTES, storeImage } from '@/lib/media/store'
+import {
+  conversationMediaPrefix,
+  isAcceptedImageType,
+  MAX_IMAGE_BYTES,
+  storeImage,
+} from '@/lib/media/store'
 
 /**
  * Message content lives on a different host from the rest of the Messaging API.
@@ -54,7 +59,7 @@ export async function captureInboundImage(params: {
     }
 
     const stored = await storeImage({
-      conversationId: params.conversationId,
+      prefix: conversationMediaPrefix(params.conversationId),
       bytes,
       contentType,
     })

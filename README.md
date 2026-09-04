@@ -172,6 +172,29 @@ At a couple of dozen entries this is not a compromise — it is the right amount
 of machinery. Embeddings become worth their weight when the corpus is too large
 for a person to skim.
 
+## Teaching the bot
+
+`/console/training` is the whole of the bot's knowledge, editable. Everything
+the agent is allowed to say comes from `faq_entries`, so this screen is where a
+new answer, a corrected price or a changed opening time happens — a data edit,
+not a deploy.
+
+The screen exists because of what the grounding rule costs. The agent refuses to
+answer anything the FAQ does not cover, which is the right trade, but it means
+the shop's only way to widen what the bot can do was a SQL statement. Now it is
+a form.
+
+**A picture needs a name before it can be attached.** `search_faq` tells the
+agent a picture exists and `show_image` takes that name and nothing else, so an
+entry with no name is one the agent could never ask for. The console refuses the
+upload rather than storing a file nothing can reach, and refuses to remove the
+name while a picture is still attached.
+
+The tag guidance is on the form, next to the field, because it is where the
+ranking goes wrong in practice: tags match by appearing *inside* what the
+customer typed, so short and specific beats long, and a very common word like
+`ไป` matches almost every sentence.
+
 ## Pictures
 
 Three things send one: an operator attaching a photo, the agent showing what the

@@ -1,5 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/server'
-import { removeConversationMedia } from '@/lib/media/store'
+import { conversationMediaPrefix, removeMediaUnder } from '@/lib/media/store'
 import { newTestUserId, TEST_EVENT_PREFIX, TEST_USER_PREFIX } from './line'
 
 /**
@@ -8,7 +8,7 @@ import { newTestUserId, TEST_EVENT_PREFIX, TEST_USER_PREFIX } from './line'
  * nothing left to say which conversations were ours.
  */
 async function sweepMediaFor(conversationIds: string[]): Promise<void> {
-  await Promise.all(conversationIds.map((id) => removeConversationMedia(id)))
+  await Promise.all(conversationIds.map((id) => removeMediaUnder(conversationMediaPrefix(id))))
 }
 
 /**
